@@ -1,0 +1,124 @@
+# render.yaml — Shango Nexus Multi-Region Blueprint
+# Regions: Singapore (SG) | Oregon US (US)
+# Deploy: connect GitHub repo → Render Dashboard → "Apply Blueprint"
+# Version: v6.0 — Sprint 8 | Feb 28 2026
+
+services:
+
+  # ── REGION: Singapore (primary — closest to Kolkata) ────────────────────
+  - type: web
+    name: nexus-backend-sg
+    region: singapore
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
+    rootDir: nexus-backend
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: nexus-secrets
+    autoDeploy: true
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+
+  # ── REGION: Oregon US (covers US/global traffic) ────────────────────────
+  - type: web
+    name: nexus-backend-us
+    region: oregon
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
+    rootDir: nexus-backend
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: nexus-secrets
+    autoDeploy: true
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+
+  # ── Dashboard: Streamlit (Singapore — ops team in Kolkata) ──────────────
+  - type: web
+    name: nexus-dashboard
+    region: singapore
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
+    rootDir: nexus-dashboard
+    healthCheckPath: /
+    envVars:
+      - fromGroup: nexus-secrets
+    autoDeploy: true
+
+  # ── Redis: Shared across regions via REDIS_URL env var ─────────────────
+  - type: redis
+    name: nexus-redis
+    region: singapore
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+
+# ── Env Group (set once, shared by all services) ──────────────────────────
+envVarGroups:
+  - name: nexus-secrets
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: VAPI_ASSISTANT_ID
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: POLYGON_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_API_SECRET
+        sync: false
+      - key: ALPACA_ENABLED
+        value: "false"
+      - key: AGENTOPS_API_KEY
+        sync: false
+      - key: NEXUS_RSA_PRIVATE_KEY
+        sync: false
+      - key: DISABLE_INTERPRETABILITY
+        value: "0"
+      - key: N8N_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: nexus-redis
+          type: redis
+          property: connectionString

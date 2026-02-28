@@ -1,0 +1,220 @@
+{
+  "name": "Janus → Aurora Regime Signal",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "janus-regime-change",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-trigger",
+      "name": "Regime Change Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [],
+          "string": [
+            {
+              "value1": "={{ $json.body.regime }}",
+              "value2": "bull"
+            }
+          ],
+          "number": [
+            {
+              "value1": "={{ $json.body.confidence }}",
+              "operation": "larger",
+              "value2": 0.7
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "id": "node-if-bull-market",
+      "name": "Bull Market High Confidence?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/war-room/run",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "task",
+              "value": "increase_outreach"
+            },
+            {
+              "name": "reason",
+              "value": "Bull market detected — premium clients active"
+            },
+            {
+              "name": "intensity_multiplier",
+              "value": "1.5"
+            },
+            {
+              "name": "target_tier",
+              "value": "HIGH"
+            },
+            {
+              "name": "message_angle",
+              "value": "Market is up — now is the time to scale your pipeline"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-aurora-increase-outreach",
+      "name": "Aurora — Increase Outreach 1.5x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [700, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/war-room/run",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "task",
+              "value": "reduce_outreach_intensity"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.body.regime }} regime detected — reducing outreach"
+            },
+            {
+              "name": "intensity_multiplier",
+              "value": "0.6"
+            },
+            {
+              "name": "target_tier",
+              "value": "ALL"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-aurora-reduce-outreach",
+      "name": "Aurora — Reduce Outreach",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [700, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/nexus/events",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "type",
+              "value": "janus.regime_signal_sent"
+            },
+            {
+              "name": "regime",
+              "value": "={{ $('Regime Change Webhook').item.json.body.regime }}"
+            },
+            {
+              "name": "aurora_notified",
+              "value": "true"
+            },
+            {
+              "name": "confidence",
+              "value": "={{ $('Regime Change Webhook').item.json.body.confidence }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-publish-event",
+      "name": "Publish Nexus Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "webhookUri": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "text": "={{ '📈 Janus→Aurora: ' + $('Regime Change Webhook').item.json.body.regime + ' regime (' + ($('Regime Change Webhook').item.json.body.confidence * 100).toFixed(0) + '% confidence). Aurora outreach intensity ' + ($('Regime Change Webhook').item.json.body.regime === 'bull' ? 'increased 1.5x 🚀' : 'reduced ⚠️') }}",
+        "otherOptions": {}
+      },
+      "id": "node-slack-notify",
+      "name": "Slack Notify",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1180, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"regime\": \"{{ $('Regime Change Webhook').item.json.body.regime }}\", \"action\": \"aurora_notified\" }"
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Regime Change Webhook": {
+      "main": [
+        [{ "node": "Bull Market High Confidence?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Bull Market High Confidence?": {
+      "main": [
+        [{ "node": "Aurora — Increase Outreach 1.5x", "type": "main", "index": 0 }],
+        [{ "node": "Aurora — Reduce Outreach", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aurora — Increase Outreach 1.5x": {
+      "main": [
+        [{ "node": "Publish Nexus Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aurora — Reduce Outreach": {
+      "main": [
+        [{ "node": "Publish Nexus Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Publish Nexus Event": {
+      "main": [
+        [{ "node": "Slack Notify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Slack Notify": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "sprint5-janus-aurora-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "janus-to-aurora-regime-signal",
+  "tags": ["janus", "aurora", "cross-pod", "sprint5"]
+}

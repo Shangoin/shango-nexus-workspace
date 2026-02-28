@@ -1,0 +1,163 @@
+{
+  "name": "Aurora Fail → Syntropy Resource (Cross-Pod)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aurora-booking-failed",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "aurora-booking-failed"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.critique.pain_points.join(' ') }}",
+              "operation": "contains",
+              "value2": "skill"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "id": "if-skill-trigger",
+      "name": "IF: Pain = Skill/Training/Team",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "notes": "Only trigger Syntropy cross-pod when pain is skill/training/team related"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/war-room/run",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ 'Generate a learning resource for: ' + $json.body.critique.pain_points[0] }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ 'Company: ' + $json.body.lead.company + ' | Topic: ' + $json.body.critique.pain_points[0] }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-syntropy",
+      "name": "POST → Syntropy War Room",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/aurora/nurture",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_phone",
+              "value": "={{ $('Webhook Trigger').item.json.body.lead.phone }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $('Webhook Trigger').item.json.body.lead.company }}"
+            },
+            {
+              "name": "resource",
+              "value": "={{ $json.result }}"
+            },
+            {
+              "name": "resource_source",
+              "value": "syntropy_cross_pod"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "http-aurora-nurture",
+      "name": "POST → Aurora Nurture Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ ':zap: Aurora→Syntropy cross-pod triggered for *' + $('Webhook Trigger').item.json.body.lead.name + '* at *' + $('Webhook Trigger').item.json.body.lead.company + '*\\nPain: ' + $('Webhook Trigger').item.json.body.critique.pain_points[0] + '\\nResource generated: ' + $('POST → Syntropy War Room').item.json.result.substring(0, 100) + '...' }}"
+            }
+          ]
+        }
+      },
+      "id": "slack-notify",
+      "name": "Slack: Notify team@shango.in",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "content": "## No Cross-Pod Trigger\n\nBooking failed but pain is not skill/training/team related.\nContinue normal nurture sequence.",
+        "height": 80,
+        "width": 300
+      },
+      "id": "no-trigger-note",
+      "name": "Note: No Cross-Pod",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [680, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [{ "node": "IF: Pain = Skill/Training/Team", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Pain = Skill/Training/Team": {
+      "main": [
+        [{ "node": "POST → Syntropy War Room", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "POST → Syntropy War Room": {
+      "main": [
+        [{ "node": "POST → Aurora Nurture Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST → Aurora Nurture Email": {
+      "main": [
+        [{ "node": "Slack: Notify team@shango.in", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "aurora" },
+    { "name": "syntropy" },
+    { "name": "cross-pod" }
+  ]
+}

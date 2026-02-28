@@ -1,0 +1,273 @@
+{
+  "name": "Syntropy → Aurora Cross-Sell (ERS Milestone)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "syntropy-ers-milestone",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "ERS Milestone Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ers-threshold",
+              "leftValue": "={{ $json.body.ers_score }}",
+              "rightValue": 75,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "company-present",
+              "leftValue": "={{ $json.body.company }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ers-condition",
+      "name": "ERS ≥ 75 + Company Present",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/lead",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "name",
+              "value": "={{ $json.body.student_name }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.body.student_email }}"
+            },
+            {
+              "name": "company",
+              "value": "={{ $json.body.company }}"
+            },
+            {
+              "name": "source",
+              "value": "syntropy_ers_milestone"
+            },
+            {
+              "name": "lead_score_boost",
+              "value": 15
+            },
+            {
+              "name": "notes",
+              "value": "=Syntropy graduate — ERS {{ $json.body.ers_score }}/100 on {{ $json.body.topic }} (top {{ 100 - $json.body.percentile }}%)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aurora-score-boost",
+      "name": "Aurora — Score Boost (+15)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/pods/aurora/nurture",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "student_id",
+              "value": "={{ $('ERS Milestone Webhook').item.json.body.student_id }}"
+            },
+            {
+              "name": "sequence",
+              "value": "syntropy_graduate"
+            },
+            {
+              "name": "context",
+              "value": "=Top {{ 100 - $('ERS Milestone Webhook').item.json.body.percentile }}% on {{ $('ERS Milestone Webhook').item.json.body.topic }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aurora-nurture",
+      "name": "Aurora — Nurture Sequence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [700, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/nexus/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "pod",
+              "value": "syntropy"
+            },
+            {
+              "name": "event_type",
+              "value": "syntropy.cross_sell_triggered"
+            },
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify({ student_id: $('ERS Milestone Webhook').item.json.body.student_id, ers_score: $('ERS Milestone Webhook').item.json.body.ers_score, topic: $('ERS Milestone Webhook').item.json.body.topic, company: $('ERS Milestone Webhook').item.json.body.company }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "publish-event",
+      "name": "Publish cross_sell_triggered Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [700, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=🎓 *Syntropy→Aurora Cross-Sell Triggered!*\n• Student: {{ $('ERS Milestone Webhook').item.json.body.student_name }} ({{ $('ERS Milestone Webhook').item.json.body.company }})\n• Topic: {{ $('ERS Milestone Webhook').item.json.body.topic }}\n• ERS Score: {{ $('ERS Milestone Webhook').item.json.body.ers_score }}/100 (Top {{ 100 - $('ERS Milestone Webhook').item.json.body.percentile }}%)\n• Aurora nurture sequence: syntropy_graduate"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack — Cross-Sell Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [940, 340]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'ok', message: 'Cross-sell triggered', student_id: $('ERS Milestone Webhook').item.json.body.student_id }) }}"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [940, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\": \"skipped\", \"reason\": \"ERS below threshold or no company\"}"
+      },
+      "id": "respond-skipped",
+      "name": "Respond Skipped",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 580]
+    }
+  ],
+  "connections": {
+    "ERS Milestone Webhook": {
+      "main": [
+        [
+          { "node": "ERS ≥ 75 + Company Present", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "ERS ≥ 75 + Company Present": {
+      "main": [
+        [
+          { "node": "Aurora — Score Boost (+15)", "type": "main", "index": 0 },
+          { "node": "Aurora — Nurture Sequence", "type": "main", "index": 0 },
+          { "node": "Publish cross_sell_triggered Event", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Respond Skipped", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Aurora — Nurture Sequence": {
+      "main": [
+        [
+          { "node": "Slack — Cross-Sell Alert", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Aurora — Score Boost (+15)": {
+      "main": [
+        [
+          { "node": "Respond OK", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "createdAt": "2025-01-01", "updatedAt": "2025-01-01", "id": "cross-sell", "name": "cross-sell" },
+    { "createdAt": "2025-01-01", "updatedAt": "2025-01-01", "id": "syntropy", "name": "syntropy" },
+    { "createdAt": "2025-01-01", "updatedAt": "2025-01-01", "id": "aurora", "name": "aurora" }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "versionId": "sprint7"
+}

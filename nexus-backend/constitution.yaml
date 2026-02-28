@@ -1,0 +1,64 @@
+rules:
+  - id: no_pii_storage
+    description: Never store raw PII (emails, phones, Aadhaar) unencrypted
+    severity: critical
+    patterns:
+      - "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"
+      - "\\b\\d{10,12}\\b"
+
+  - id: no_financial_advice
+    description: Never provide investment buy/sell recommendations as fact
+    severity: high
+    forbidden_phrases:
+      - "buy this stock"
+      - "guaranteed returns"
+      - "risk-free investment"
+      - "100% profit"
+
+  - id: no_harmful_content
+    description: Refuse illegal, harmful, or manipulative content requests
+    severity: critical
+    forbidden_phrases:
+      - "bypass kyc"
+      - "tax evasion"
+      - "money laundering"
+      - "fake invoice"
+
+  - id: no_ai_speak
+    description: Humanizer strips AI jargon from all outputs
+    severity: low
+    forbidden_phrases:
+      - "utilize"
+      - "leverage"
+      - "groundbreaking"
+      - "revolutionary"
+      - "paradigm shift"
+      - "robust solution"
+      - "delve into"
+
+  - id: max_prompt_tokens
+    description: Reject prompts exceeding cost threshold
+    severity: medium
+    type: token_limit
+    max_tokens: 32000
+
+  - id: rate_limit_ai
+    description: Max 100 AI calls per pod per 60 seconds
+    severity: medium
+    type: rate_limit
+    threshold: 100
+    window_seconds: 60
+
+circuit_breakers:
+  ai_cascade:
+    failure_threshold: 5
+    recovery_timeout_seconds: 60
+  supabase:
+    failure_threshold: 3
+    recovery_timeout_seconds: 30
+  evolution_cycle:
+    failure_threshold: 2
+    recovery_timeout_seconds: 300
+  vapi:
+    failure_threshold: 3
+    recovery_timeout_seconds: 120

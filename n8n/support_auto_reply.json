@@ -1,0 +1,80 @@
+{
+  "name": "Shango Nexus — Support Auto-Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Support Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $json.email || '';\nconst message = $json.message || '';\nconst pod = $json.pod || 'nexus';\nreturn [{ json: { email, message, pod, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "extract-fields",
+      "name": "Extract Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "team@shango.in",
+        "toEmail": "={{ $json.email }}",
+        "subject": "We got your message — Shango Nexus",
+        "emailType": "html",
+        "message": "<h2>Thanks for reaching out!</h2><p>We've received your message and will respond within 24 hours.</p><p>In the meantime, check your live dashboard: <a href='https://shango.in/nexus'>shango.in/nexus</a></p><p>— Team Shango, Kolkata</p>"
+      },
+      "id": "send-email",
+      "name": "Auto Reply Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXUS_BACKEND_URL }}/api/nexus/events",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "pod", "value": "={{ $json.pod }}" },
+            { "name": "event_type", "value": "support_ticket" },
+            { "name": "payload", "value": "={{ { email: $json.email, message: $json.message } }}" },
+            { "name": "timestamp", "value": "={{ Date.now() / 1000 }}" }
+          ]
+        }
+      },
+      "id": "log-to-nexus",
+      "name": "Log to Nexus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"received\": true, \"message\": \"Auto-reply sent\" }"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Support Webhook": { "main": [[{ "node": "Extract Fields", "type": "main", "index": 0 }]] },
+    "Extract Fields": { "main": [[{ "node": "Auto Reply Email", "type": "main", "index": 0 }, { "node": "Log to Nexus", "type": "main", "index": 0 }]] },
+    "Auto Reply Email": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Log to Nexus": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

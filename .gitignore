@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+*.pyc
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+landing/.next/
+landing/node_modules/
+landing/out/
+
+# Environment — NEVER commit secrets
+.env
+.env.local
+.env.production
+.env.*.local
+nexus-backend/.env
+
+# Test artifacts
+test_results*.txt
+*.log
+logs/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Render / Vercel — local overrides
+.vercel/
+
+# Docker volumes
+postgres_data/
+redis_data/

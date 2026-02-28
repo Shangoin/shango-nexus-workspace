@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  # ── Shango Nexus Backend ──────────────────────────────────────────────────
+  nexus-backend:
+    build:
+      context: ./nexus-backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROK_API_KEY=${GROK_API_KEY}
+      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - VAPI_API_KEY=${VAPI_API_KEY}
+      - VAPI_ASSISTANT_ID=${VAPI_ASSISTANT_ID}
+      - VAPI_PHONE_NUMBER_ID=${VAPI_PHONE_NUMBER_ID}
+      - VAPI_PHONE_NUMBER_ID_IN=${VAPI_PHONE_NUMBER_ID_IN}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - REDIS_URL=redis://redis:6379
+      - ADMIN_SECRET=${ADMIN_SECRET}
+      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Streamlit Dashboard ───────────────────────────────────────────────────
+  nexus-dashboard:
+    build:
+      context: ./nexus-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - NEXUS_BACKEND_URL=http://nexus-backend:8000
+    depends_on:
+      - nexus-backend
+    restart: unless-stopped
+
+  # ── Next.js Landing Page ──────────────────────────────────────────────────
+  landing:
+    build:
+      context: ./landing
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_NEXUS_BACKEND_URL=${WEBHOOK_BASE_URL:-http://localhost:8000}
+    restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+volumes:
+  redis_data:

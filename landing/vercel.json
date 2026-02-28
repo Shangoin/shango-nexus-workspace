@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "name": "shango-nexus-landing",
+  "alias": ["shango.in", "www.shango.in"],
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "env": {
+    "NEXT_PUBLIC_API_BASE_SG": "@nexus_api_base_sg",
+    "NEXT_PUBLIC_API_BASE_US": "@nexus_api_base_us",
+    "NEXT_PUBLIC_STRIPE_KEY": "@stripe_publishable_key",
+    "NEXT_PUBLIC_RAZORPAY_KEY": "@razorpay_key_id"
+  },
+  "regions": ["sin1", "iad1"],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-XSS-Protection", "value": "1; mode=block" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://checkout.razorpay.com https://js.stripe.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://api.shango.in https://nexus-backend-sg.onrender.com https://nexus-backend-us.onrender.com;"
+        },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/nexus/:path*",
+      "destination": "https://nexus-backend-sg.onrender.com/api/nexus/:path*"
+    },
+    {
+      "source": "/api/realtime/:path*",
+      "destination": "https://nexus-backend-sg.onrender.com/api/realtime/:path*"
+    }
+  ]
+}
