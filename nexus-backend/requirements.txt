@@ -33,7 +33,7 @@ cryptography>=42.0.0
 
 # ── Observability / Memory ──────────────────────────────────────────────────
 mem0ai==0.1.34              # Tiered memory
-transformerlens==2.11.0    # Mechanistic interpretability
+# transformer-lens — install locally only; skipped in prod via DISABLE_INTERPRETABILITY=1
 langchain-core==0.3.10      # LangChain utilities
 
 # ── Scheduling / Background ─────────────────────────────────────────────────
