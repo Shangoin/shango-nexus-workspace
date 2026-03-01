@@ -46,6 +46,6 @@ async def status(request: Request):
     supabase = get_supabase(request)
     try:
         res = await asyncio.to_thread(lambda: supabase.table("nexus_events").select("id").eq("pod", "shango_automation").execute())
-        return {"pod": "shango_automation", "role": "Webhook Veins", "event_count": len(res.data or []), "completion_pct": }
+        return {"pod": "shango_automation", "role": "Webhook Veins", "event_count": len(res.data or []), "completion_pct": 90}
     except Exception as exc:
         return {"pod": "shango_automation", "error": str(exc)}
