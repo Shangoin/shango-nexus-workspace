@@ -5,6 +5,7 @@ WORKDIR /app
 # Install system deps
 RUN apt-get update && apt-get install -y curl build-essential && rm -rf /var/lib/apt/lists/*
 
+# Cache bust: 2026-03-01
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
