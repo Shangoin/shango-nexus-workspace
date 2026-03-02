@@ -56,8 +56,16 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     # Supabase
-    app.state.supabase = create_client(settings.supabase_url, settings.supabase_key)
-    logger.info("[nexus] Supabase client ready")
+    try:
+        if settings.supabase_url and settings.supabase_key:
+            app.state.supabase = create_client(settings.supabase_url, settings.supabase_key)
+            logger.info("[nexus] Supabase client ready")
+        else:
+            app.state.supabase = None
+            logger.warning("[nexus] SUPABASE_URL/SUPABASE_KEY not set — running without Supabase")
+    except Exception as exc:
+        app.state.supabase = None
+        logger.warning("[nexus] Supabase init failed (%s) — running without Supabase", exc)
 
     # Redis
     try:
@@ -73,8 +81,11 @@ async def lifespan(app: FastAPI):
     logger.info("[nexus] Constitution loaded")
 
     # Event Bus
-    wire_evolution_triggers(app.state.supabase)
-    logger.info("[nexus] Event bus wired")
+    if app.state.supabase:
+        wire_evolution_triggers(app.state.supabase)
+        logger.info("[nexus] Event bus wired")
+    else:
+        logger.warning("[nexus] Event bus skipped — Supabase unavailable")
 
     # Scheduler — periodic evolution sweep every hour
     scheduler = AsyncIOScheduler()

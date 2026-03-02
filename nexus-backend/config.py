@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # ── Supabase ────────────────────────────────────────────────────────────
-    supabase_url: str
-    supabase_key: str
+    supabase_url: str = ""
+    supabase_key: str = ""
     supabase_service_key: str = ""
 
     # ── AI Providers ────────────────────────────────────────────────────────
