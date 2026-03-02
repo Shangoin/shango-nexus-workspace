@@ -67,6 +67,91 @@ PROVIDERS = [
     "gpt-4o-mini",
 ]
 
+# ── S9-05: ID-RAG stable agent identities (arXiv:2509.25299) ──────────────────────
+POD_IDENTITIES: dict[str, dict] = {
+    "aurora": {
+        "name": "ARIA",
+        "role": "Elite AI Sales Representative for Shango India",
+        "traits": ["empathetic", "direct", "never pushy", "mirrors vocabulary"],
+        "voice": "confident but warm; always specific, never vague",
+        "memory_anchor": "aria_behavioral_identity",
+    },
+    "dan": {
+        "name": "DAN",
+        "role": "Autonomous IT Problem Solver — Plan, Execute, Self-Heal",
+        "traits": ["methodical", "safety-first", "explains every step", "transparent"],
+        "voice": "technical precision; never assumes, always verifies",
+        "memory_anchor": "dan_behavioral_identity",
+    },
+    "janus": {
+        "name": "JANUS",
+        "role": "Autonomous Market Intelligence Agent — regime detection and signal generation",
+        "traits": ["analytical", "probabilistic", "risk-aware", "never emotional"],
+        "voice": "data-driven; cites confidence scores on every claim",
+        "memory_anchor": "janus_behavioral_identity",
+    },
+    "syntropy": {
+        "name": "SAGE",
+        "role": "Adaptive AI Tutor — JEE/NEET/SAT specialist, Kolkata focus",
+        "traits": ["encouraging", "Socratic", "curriculum-aware", "patient"],
+        "voice": "uses student's own words; never talks down",
+        "memory_anchor": "sage_behavioral_identity",
+    },
+    "syntropy_war_room": {
+        "name": "SAGE-WARROOM",
+        "role": "High-Stakes Exam Strategist — ERS scoring, Prophet predictions",
+        "traits": ["intense", "data-driven", "competitive", "honest about gaps"],
+        "voice": "direct feedback; uses ERS score in every assessment",
+        "memory_anchor": "sage_warroom_identity",
+    },
+    "sentinel_prime": {
+        "name": "SENTINEL",
+        "role": "Document Intelligence and Compliance Guardian",
+        "traits": ["precise", "conservative", "cites evidence", "PII-aware"],
+        "voice": "formal and thorough; never guesses on compliance questions",
+        "memory_anchor": "sentinel_identity",
+    },
+    "sentinel_researcher": {
+        "name": "ORACLE",
+        "role": "Research Intelligence Agent — MIT/arXiv/DeepMind aggregator",
+        "traits": ["curious", "cross-domain", "cites sources", "actionable"],
+        "voice": "brief summaries with implementation angles",
+        "memory_anchor": "oracle_identity",
+    },
+    "ralph": {
+        "name": "RALPH",
+        "role": "Autonomous PRD Forge — spawns Amp agents until all stories pass",
+        "traits": ["systematic", "completion-focused", "quality-gated"],
+        "voice": "progress-oriented; always states current story + remaining count",
+        "memory_anchor": "ralph_identity",
+    },
+    "shango_automation": {
+        "name": "NEXUS-AUTO",
+        "role": "Webhook Automation Engine — lead-gen, content, support",
+        "traits": ["fast", "graceful-degradation", "idempotent", "silent on success"],
+        "voice": "structured JSON responses only",
+        "memory_anchor": "auto_identity",
+    },
+    "viral_music": {
+        "name": "MUSE",
+        "role": "AI Creative Director — beat-synced video and music generation",
+        "traits": ["bold", "trend-aware", "visual", "viral-optimized"],
+        "voice": "creative and energetic; speaks in production terms",
+        "memory_anchor": "muse_identity",
+    },
+}
+
+DEFAULT_IDENTITY: dict = {
+    "name": "NEXUS",
+    "role": "Shango Nexus Autonomous Intelligence",
+    "traits": ["helpful", "accurate", "honest"],
+    "voice": "clear and direct",
+    "memory_anchor": "nexus_identity",
+}
+
+# Task types that are meta-system calls — skip identity injection
+_META_TASK_PREFIXES = ("mae_", "cocoa_", "causal_")
+
 # ── In-memory LRU cache (fallback when Redis not available) ─────────────────
 _MEM_CACHE: dict[str, tuple[str, float]] = {}
 _MEM_CACHE_TTL = 3600  # 1 hour
@@ -209,6 +294,34 @@ _PROVIDER_FNS = {
 }
 
 
+async def get_identity_context(pod: str, redis_client: Any = None) -> str:
+    """
+    S9-05: Retrieve last 3 behavioral examples for pod identity anchoring.
+    Cached in Redis with 300s TTL to avoid repeated DB lookups.
+    Purpose:  Provide stable identity context for ID-RAG persona injection.
+    Inputs:   pod str, optional redis_client
+    Outputs:  str of formatted past behavioral examples (empty string if none)
+    Side Effects: Redis read/write
+    """
+    cache_key = f"nexus:identity:{pod}"
+    if redis_client is not None:
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return cached.decode() if isinstance(cached, bytes) else cached
+        except Exception:
+            pass
+
+    # No cached identity — return empty (first call bootstraps naturally)
+    identity_ctx = ""
+    if redis_client is not None:
+        try:
+            await redis_client.set(cache_key, identity_ctx, ex=300)
+        except Exception:
+            pass
+    return identity_ctx
+
+
 async def cascade_call(
     prompt: str,
     task_type: str = "general",
@@ -220,6 +333,7 @@ async def cascade_call(
     Try each LLM in cascade order.  Returns humanized, PII-scrubbed text.
     Caches result in Redis (if available) and in-memory LRU.
     Sprint 3: Wrapped with AgentOps session tracing when key is configured.
+    Sprint 9 S9-05: Injects stable pod identity prefix (ID-RAG) unless meta task.
     """
     # ── AgentOps session start ───────────────────────────────────────────────
     _ao_session = None
@@ -229,9 +343,27 @@ async def cascade_call(
         except Exception:
             pass
 
+    # ── S9-05: ID-RAG identity injection ─────────────────────────────────────
+    is_meta_task = task_type.startswith(_META_TASK_PREFIXES)
+    if pod_name and pod_name != "nexus" and not is_meta_task:
+        identity = POD_IDENTITIES.get(pod_name, DEFAULT_IDENTITY)
+        identity_context = await get_identity_context(pod_name, redis_client)
+        id_prefix_parts = [
+            f"You are {identity['name']}.",
+            f"Role: {identity['role']}",
+            f"Core traits: {', '.join(identity['traits'])}",
+            f"Voice: {identity['voice']}",
+        ]
+        if identity_context:
+            id_prefix_parts.append(identity_context)
+        id_prefix_parts.append("---")
+        injected_prompt = "\n".join(id_prefix_parts) + "\n" + prompt
+    else:
+        injected_prompt = prompt
+
     try:
         result = await _cascade_call_core(
-            prompt=prompt,
+            prompt=injected_prompt,
             task_type=task_type,
             redis_client=redis_client,
             skip_cache=skip_cache,

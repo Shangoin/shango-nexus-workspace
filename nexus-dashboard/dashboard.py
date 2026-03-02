@@ -1,7 +1,7 @@
 """
 nexus-dashboard/dashboard.py
 Shango Nexus — Streamlit command centre.
-6 pages: Overview · Aurora · Janus · Evolution · Events · Revenue
+7 pages: Overview · Aurora · Janus · Evolution · Events · Revenue · 🧬 Prometheus
 Runs on port 8501 (Render deployment).
 """
 
@@ -88,7 +88,7 @@ with st.sidebar:
     st.image("https://shango.in/logo.png", width=120) if False else st.title("🧠 Shango Nexus")
     st.caption("Alien Intelligence HQ")
     st.divider()
-    page = st.radio("Navigate", ["Overview", "Aurora", "Janus", "Evolution", "Events", "Revenue"])
+    page = st.radio("Navigate", ["Overview", "Aurora", "Janus", "Evolution", "Events", "Revenue", "🧬 Prometheus"])
     st.divider()
     health = get_health()
     if "error" not in health:
@@ -510,6 +510,111 @@ elif page == "Revenue":
     ]
     st.dataframe(pd.DataFrame(pricing))
 
+# ── Page: Prometheus Intelligence Layer ─────────────────────────────────────
+
+elif page == "🧬 Prometheus":
+    st.title("🧬 Prometheus Intelligence Layer")
+    st.caption("Sprint 9 — MAE Adversarial Evolution · AMA Causal Memory · COCOA Constitution · HiMem Decay · ID-RAG Personas")
+
+    # ── Section 1: MAE Adversarial Evolution ─────────────────────────────────
+    st.header("🥊 MAE Cycles (Adversarial Evolution)")
+    mae_evolutions = fetch("/api/evolution/history?limit=50").get("evolutions", [])
+    mae_rows = [e for e in mae_evolutions if e.get("event_type") == "nexus.mae_cycle_complete"]
+    if mae_rows:
+        df_mae = pd.DataFrame(mae_rows)
+        col1_mae, col2_mae, col3_mae = st.columns(3)
+        col1_mae.metric("MAE Cycles Run", len(mae_rows))
+        last_score = mae_rows[0].get("payload", {}).get("best_score") if mae_rows else "—"
+        col2_mae.metric("Last Best Score", last_score if last_score is not None else "—")
+        active_pods = len({r.get("pod") or r.get("pod_name", "?") for r in mae_rows})
+        col3_mae.metric("Active Pods", active_pods)
+        pod_col = "pod_name" if "pod_name" in df_mae.columns else ("pod" if "pod" in df_mae.columns else None)
+        if pod_col:
+            fig_mae = px.bar(df_mae[pod_col].value_counts().reset_index(),
+                             x="index" if "index" in df_mae[pod_col].value_counts().reset_index().columns else pod_col,
+                             y="count" if "count" in df_mae[pod_col].value_counts().reset_index().columns else pod_col,
+                             title="MAE Cycles by Pod", color_discrete_sequence=px.colors.sequential.Plasma)
+            st.plotly_chart(fig_mae, use_container_width=True)
+    else:
+        st.info("No MAE cycles recorded yet. Set MAE_ADVERSARIAL=1 in env vars to enable.")
+
+    # ── Section 2: Causal Memory Graph ───────────────────────────────────────
+    st.header("🕷️ Causal Memory Graph")
+    causal_events = fetch("/api/nexus/events?limit=100&event_type=nexus.causal_recall").get("events", [])
+    causal_count = len(causal_events)
+    col1_c, col2_c = st.columns(2)
+    col1_c.metric("Causal Recalls (all-time)", causal_count)
+    if causal_events:
+        df_causal = pd.DataFrame(causal_events)
+        ts_col = next((c for c in ["created_at", "timestamp"] if c in df_causal.columns), None)
+        if ts_col:
+            df_causal["day"] = pd.to_datetime(df_causal[ts_col]).dt.date
+            daily = df_causal.groupby("day").size().reset_index(name="recalls")
+            fig_c = px.area(daily, x="day", y="recalls", title="Causal Recalls per Day",
+                            color_discrete_sequence=["#7c3aed"])
+            st.plotly_chart(fig_c, use_container_width=True)
+    else:
+        col2_c.info("No causal recall events logged yet.")
+
+    # ── Section 3: COCOA Constitution Evolution ───────────────────────────────
+    st.header("📃 COCOA Constitution Evolution")
+    const_data = fetch("/api/nexus/events?limit=200&event_type=nexus.constitution_evolved").get("events", [])
+    prune_data = fetch("/api/nexus/events?limit=200&event_type=nexus.constitution_pruned").get("events", [])
+    col1_co, col2_co, col3_co = st.columns(3)
+    col1_co.metric("Rules Evolved", len(const_data))
+    col2_co.metric("Rules Pruned", len(prune_data))
+    col3_co.metric("Net Rules", len(const_data) - len(prune_data))
+    if const_data or prune_data:
+        all_const = pd.DataFrame(
+            [{"ts": e.get("created_at",""), "action": "evolved"} for e in const_data]
+            + [{"ts": e.get("created_at",""), "action": "pruned"} for e in prune_data]
+        )
+        all_const["day"] = pd.to_datetime(all_const["ts"], errors="coerce").dt.date
+        daily_const = all_const.groupby(["day","action"]).size().reset_index(name="count")
+        fig_co = px.bar(daily_const, x="day", y="count", color="action", barmode="group",
+                        title="Constitution Changes per Day",
+                        color_discrete_map={"evolved": "#10b981", "pruned": "#ef4444"})
+        st.plotly_chart(fig_co, use_container_width=True)
+    else:
+        st.info("Constitution evolution events will appear here after 50 violations accumulate.")
+
+    # ── Section 4: Memory Health (HiMem Decay) ────────────────────────────────
+    st.header("🧠 Memory Health (HiMem Decay)")
+    mem_data = fetch("/api/nexus/events?limit=100&event_type=nexus.memory_decayed").get("events", [])
+    col1_m, col2_m, col3_m = st.columns(3)
+    total_decayed = sum(e.get("payload", {}).get("pruned", 0) for e in mem_data)
+    col1_m.metric("Total Memories Pruned", total_decayed)
+    col2_m.metric("Decay Cycles Run", len(mem_data))
+    decay_types = {"episodic": 0.95, "semantic": 0.99, "procedural": 1.0, "causal": 0.97}
+    decay_df = pd.DataFrame([{"Type": k, "Decay Rate/Day": v} for k, v in decay_types.items()])
+    col3_m.dataframe(decay_df, use_container_width=True)
+    if mem_data:
+        df_mem = pd.DataFrame(mem_data)
+        ts_col = next((c for c in ["created_at", "timestamp"] if c in df_mem.columns), None)
+        if ts_col:
+            df_mem["day"] = pd.to_datetime(df_mem[ts_col]).dt.date
+            daily_m = df_mem.groupby("day").size().reset_index(name="runs")
+            fig_m = px.bar(daily_m, x="day", y="runs", title="Decay Runs per Day",
+                           color_discrete_sequence=["#f59e0b"])
+            st.plotly_chart(fig_m, use_container_width=True)
+
+    # ── Section 5: Agent Identities (ID-RAG) ─────────────────────────────────
+    st.header("🤖 Agent Identities (ID-RAG Personas)")
+    identity_rows = [
+        {"Pod": "aurora",              "Agent": "ARIA",          "Role": "Autonomous Revenue Intelligence Agent"},
+        {"Pod": "dan",                 "Agent": "DAN",           "Role": "Distributed Autonomous Navigator"},
+        {"Pod": "janus",              "Agent": "JANUS",         "Role": "Quantitative Market Intelligence Engine"},
+        {"Pod": "syntropy",           "Agent": "SAGE",          "Role": "AI-powered Exam Intelligence System"},
+        {"Pod": "syntropy_war_room",   "Agent": "SAGE-WARROOM",  "Role": "Real-time Exam Battle Station"},
+        {"Pod": "sentinel_prime",      "Agent": "SENTINEL",      "Role": "Autonomous Security Intelligence"},
+        {"Pod": "sentinel_researcher", "Agent": "ORACLE",        "Role": "Deep Research Intelligence Engine"},
+        {"Pod": "ralph",              "Agent": "RALPH",         "Role": "Autonomous PRD-to-Code Agent"},
+        {"Pod": "shango_automation",  "Agent": "NEXUS-AUTO",    "Role": "Webhook Automation Intelligence"},
+        {"Pod": "viral_music",        "Agent": "MUSE",          "Role": "Creative Music Intelligence Agent"},
+    ]
+    st.dataframe(pd.DataFrame(identity_rows), use_container_width=True)
+    st.caption("Each agent's identity is injected as a stable prefix on every LLM call (ID-RAG S9-05). Meta-tasks (MAE/COCOA/Causal) skip injection to preserve reasoning purity.")
+
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
-st.caption(f"Shango Nexus v2.0 · Sprint 5 · team@shango.in · shango.in · {datetime.now().strftime('%Y-%m-%d %H:%M')} IST")
+st.caption(f"Shango Nexus v6.0-Sprint9 · team@shango.in · shango.in · {datetime.now().strftime('%Y-%m-%d %H:%M')} IST")

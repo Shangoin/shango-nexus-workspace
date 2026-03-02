@@ -33,9 +33,24 @@ async def generate_strategic_brief(lead: dict, call_history: list | None = None)
     """
     from pods.aurora.reconstructive_memory import reconstruct_prospect_persona
     from core.ai_cascade import cascade_call
+    from core.memory import causal_recall
 
     call_history = call_history or []
     persona = await reconstruct_prospect_persona(lead)
+
+    # S9-02: AMA causal recall — retrieve causally-grounded winning patterns
+    industry = lead.get("industry", lead.get("company", "unknown"))
+    try:
+        relevant_memories = await causal_recall(
+            f"CAUSAL: actions that caused meeting_booked=True for {industry} prospects",
+            pod="aurora",
+            top_k=5,
+        )
+        causal_context = "\n".join(
+            m.get("content", "") for m in relevant_memories[:3]
+        ) if relevant_memories else "No prior causal patterns available."
+    except Exception:
+        causal_context = ""
 
     try:
         brief = await cascade_call(
@@ -44,6 +59,7 @@ async def generate_strategic_brief(lead: dict, call_history: list | None = None)
 Lead data: {lead}
 Reconstructed persona: {persona}
 Call history (most recent 3): {call_history[-3:] if call_history else "First contact"}
+Causal patterns from similar wins: {causal_context}
 
 Output a precise strategic brief with these 7 sections:
 1. Buying stage: awareness / consideration / decision

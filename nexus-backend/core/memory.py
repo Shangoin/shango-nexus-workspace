@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 _REDIS_TTL = 3600          # 1 hour
 _PG_RETENTION_DAYS = 30
 
+# ── S9-04: HiMem decay rates (arXiv:2601.06377) ──────────────────────────────
+# Per-day decay multiplier applied by decay_memories() (daily at 3 AM)
+MEMORY_DECAY: dict[str, float] = {
+    "episodic": 0.95,    # specific calls, leads — decays fast
+    "semantic": 0.99,    # learned patterns — decays slowly
+    "procedural": 1.0,   # RSA-signed proofs, verified facts — never decays
+    "causal": 0.97,      # causal chains — medium decay
+}
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # L1: Redis
@@ -76,21 +85,26 @@ async def pgvector_upsert(
     pod: str,
     content: str,
     metadata: dict,
+    memory_type: str = "semantic",
+    initial_weight: float = 1.0,
 ) -> None:
-    """Store content + embedding in nexus_memories table."""
+    """Store content + embedding in nexus_memories table with memory_type and weight."""
     try:
         embedding = await _embed(content)
+        payload = {
+            "pod": pod,
+            "content": content,
+            "embedding": embedding,
+            "metadata": {
+                **(metadata or {}),
+                "memory_type": memory_type,
+                "weight": initial_weight,
+            },
+            "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+        }
         await __import__("asyncio").to_thread(
             lambda: supabase_client.table("nexus_memories")
-            .upsert(
-                {
-                    "pod": pod,
-                    "content": content,
-                    "embedding": embedding,
-                    "metadata": metadata,
-                    "created_at": __import__("datetime").datetime.utcnow().isoformat(),
-                }
-            )
+            .upsert(payload)
             .execute()
         )
     except Exception as exc:
@@ -103,7 +117,9 @@ async def pgvector_search(
     query: str,
     top_k: int = 5,
 ) -> list[dict]:
-    """Semantic nearest-neighbour lookup using pgvector match_nexus_memories RPC."""
+    """Semantic nearest-neighbour lookup using pgvector match_nexus_memories RPC.
+    Results ranked by weighted_score = similarity * memory_weight (S9-04).
+    """
     try:
         embedding = await _embed(query)
         result = await __import__("asyncio").to_thread(
@@ -116,7 +132,20 @@ async def pgvector_search(
                 },
             ).execute()
         )
-        return result.data or []
+        candidates = result.data or []
+        # S9-04: weight results by memory decay weight
+        for candidate in candidates:
+            similarity_score = float(candidate.get("similarity", 0.5))
+            meta = candidate.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = __import__("json").loads(meta)
+                except Exception:
+                    meta = {}
+            weight = float(meta.get("weight", 1.0))
+            candidate["weighted_score"] = similarity_score * weight
+        candidates.sort(key=lambda x: x.get("weighted_score", 0.0), reverse=True)
+        return candidates[:top_k]
     except Exception as exc:
         logger.warning("[memory.pgvector] search fail: %s", exc)
         return []
@@ -165,10 +194,17 @@ async def remember(
     key: str,
     content: str,
     metadata: dict | None = None,
+    memory_type: str = "semantic",
+    initial_weight: float = 1.0,
 ) -> None:
-    """Write to all three tiers."""
+    """Write to all three tiers. S9-04: accepts memory_type and initial_weight."""
     await redis_store(redis_client, pod, key, content)
-    await pgvector_upsert(supabase_client, pod, content, metadata or {})
+    await pgvector_upsert(
+        supabase_client, pod, content,
+        metadata or {},
+        memory_type=memory_type,
+        initial_weight=initial_weight,
+    )
 
 
 async def recall(
@@ -179,7 +215,7 @@ async def recall(
     query: str,
     top_k: int = 5,
 ) -> dict:
-    """Read from best available tier."""
+    """Read from best available tier. pgvector results ranked by weighted_score (S9-04)."""
     hot = await redis_fetch(redis_client, pod, key)
     if hot:
         return {"source": "redis", "data": hot}
@@ -187,3 +223,72 @@ async def recall(
     if warm:
         return {"source": "pgvector", "data": warm}
     return {"source": "none", "data": []}
+
+
+async def decay_memories(supabase_client, pod: str | None = None) -> int:
+    """
+    S9-04: HiMem temporal decay — runs daily at 3 AM via APScheduler.
+    For each memory in nexus_memories (per memory_type decay rate):
+      new_weight = current_weight * MEMORY_DECAY[memory_type]
+      If new_weight < 0.01: delete the row (memory expired)
+      Else: update weight in metadata jsonb
+    Returns count of deleted (expired) memories.
+
+    Purpose:  Prevent memory accumulation — keep only high-relevance memories.
+    Inputs:   supabase_client, optional pod filter
+    Outputs:  int count of pruned memories
+    Side Effects: Deletes or updates rows in nexus_memories table
+    """
+    if supabase_client is None:
+        return 0
+
+    pruned = 0
+    try:
+        query = supabase_client.table("nexus_memories").select("id, metadata")
+        if pod:
+            query = query.eq("pod", pod)
+        result = await __import__("asyncio").to_thread(lambda: query.execute())
+        rows = result.data or []
+
+        import json as _json
+        for row in rows:
+            meta = row.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            memory_type = meta.get("memory_type", "semantic")
+            if memory_type == "procedural":
+                continue  # never decays
+            decay_rate = MEMORY_DECAY.get(memory_type, 0.99)
+            current_weight = float(meta.get("weight", 1.0))
+            new_weight = current_weight * decay_rate
+
+            if new_weight < 0.01:
+                # Memory expired — delete
+                await __import__("asyncio").to_thread(
+                    lambda rid=row["id"]: supabase_client.table("nexus_memories")
+                    .delete().eq("id", rid).execute()
+                )
+                pruned += 1
+            else:
+                # Update weight in metadata
+                meta["weight"] = round(new_weight, 6)
+                await __import__("asyncio").to_thread(
+                    lambda rid=row["id"], m=meta: supabase_client.table("nexus_memories")
+                    .update({"metadata": m}).eq("id", rid).execute()
+                )
+    except Exception as exc:
+        logger.warning("[memory.decay] fail: %s", exc)
+
+    logger.info("[memory.decay] pruned=%d pod=%s", pruned, pod or "all")
+    return pruned
+
+
+# ── S9-02: re-export causal_recall for pod imports ────────────────────────────────
+try:
+    from core.causal_graph import causal_recall as causal_recall  # noqa: F401
+except ImportError:
+    async def causal_recall(*args, **kwargs) -> list[dict]:  # type: ignore
+        return []

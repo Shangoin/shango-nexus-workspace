@@ -18,7 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
 
 from config import get_settings
-from core.constitution import get_constitution
+from core.constitution import get_constitution, prune_ineffective_rules
+from core.memory import decay_memories
 from events.bus import wire_evolution_triggers
 
 # Pod routers
@@ -116,6 +117,17 @@ async def lifespan(app: FastAPI):
     # Sprint 6: Razorpay retry queue worker (every 5 minutes)
     from api.razorpay_webhook import process_retry_queue
     scheduler.add_job(process_retry_queue, "interval", minutes=5, id="razorpay_retry_worker")
+
+    # S9-04: HiMem — daily memory decay at 03:00
+    scheduler.add_job(
+        lambda: asyncio.create_task(decay_memories(app.state.supabase)),
+        "cron", hour=3, minute=0, id="memory_decay"
+    )
+    # S9-03: COCOA — prune ineffective constitution rules every 200 minutes
+    scheduler.add_job(
+        lambda: asyncio.create_task(prune_ineffective_rules("aurora", app.state.supabase)),
+        "interval", minutes=200, id="constitution_prune"
+    )
 
     scheduler.start()
     app.state.scheduler = scheduler

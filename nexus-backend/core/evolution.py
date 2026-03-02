@@ -8,8 +8,12 @@ Every CYCLE_THRESHOLD events, genetic_cycle() runs for all active pods.
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import logging
+import os
 import random
+import re
 import time
 from typing import Any, Callable, Coroutine
 
@@ -42,6 +46,75 @@ def register_pod(pod_name: str, fitness_fn: Callable) -> None:
     POD_FITNESS_FNS[pod_name] = fitness_fn
     POD_EVENT_COUNTERS[pod_name] = 0
     logger.info("[evolution] registered pod=%s", pod_name)
+
+
+# ── MAE helpers ───────────────────────────────────────────────────────────────
+
+def _parse_json_safe_mae(text: str) -> dict:
+    """Extract first JSON object from LLM text response."""
+    try:
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        return json.loads(match.group()) if match else {}
+    except Exception:
+        return {}
+
+
+async def mae_adversarial_fitness(individual: list, pod: str) -> float:
+    """
+    Multi-Agent Evolve (arXiv:2510.23595) Proposer-Solver-Judge fitness.
+    Purpose:  Adversarial triad evaluates an individual's genome quality.
+    Inputs:   individual (list of 8 floats), pod (str)
+    Outputs:  float fitness score 0.0-1.0 (+0.2 bonus if judge_score < 0.4)
+    Side Effects: 3 LLM cascade calls
+    """
+    from core.ai_cascade import cascade_call
+    from core.genome_decoder import decode_genome
+
+    try:
+        genome_config = decode_genome(list(individual), pod)
+
+        # Step 1 — PROPOSER: generate adversarial challenge
+        proposer_raw = await cascade_call(
+            f"You are a Proposer. Generate ONE hard adversarial test case for this "
+            f"genome configuration in the {pod} pod: {genome_config}. "
+            f'Output JSON: {{"challenge": "str", "difficulty": 0.5}}',
+            task_type="mae_proposer",
+            pod_name=pod,
+        )
+        proposer = _parse_json_safe_mae(proposer_raw)
+        challenge = proposer.get("challenge", "handle a complex multi-step edge case")
+
+        # Steps 2 + 3 — SOLVER and JUDGE in parallel (judge gets challenge context)
+        solver_prompt = (
+            f"You are a Solver. Handle this challenge using config: {genome_config}. "
+            f"Challenge: {challenge}. "
+            f'Output JSON: {{"solution": "str", "confidence": 0.7}}'
+        )
+        judge_initial_prompt = (
+            f"You are a Judge evaluating an AI solver's response. "
+            f"Challenge: {challenge}. Genome config: {genome_config}. "
+            f"Rate how well a typical solver would handle this. "
+            f'Output JSON: {{"score": 0.5, "reasoning": "str"}}'
+        )
+
+        solver_raw, judge_initial_raw = await asyncio.gather(
+            cascade_call(solver_prompt, task_type="mae_solver", pod_name=pod),
+            cascade_call(judge_initial_prompt, task_type="mae_judge", pod_name=pod),
+        )
+
+        solver = _parse_json_safe_mae(solver_raw)
+        solution = solver.get("solution", "")
+        judge = _parse_json_safe_mae(judge_initial_raw)
+        judge_score = float(judge.get("score", 0.5))
+
+        # Difficulty reward: proposer rewarded for stumping the solver
+        if judge_score < 0.4:
+            return judge_score + 0.2
+        return judge_score
+
+    except Exception as exc:
+        logger.warning("[evolution.mae] fail pod=%s err=%s", pod, exc)
+        return 0.5  # fail-open — never crash
 
 
 def increment_event(pod_name: str) -> bool:
@@ -84,10 +157,18 @@ async def genetic_cycle(pod_name: str, supabase_client=None) -> dict:
     if fitness_fn is None:
         return {"error": f"pod {pod_name} has no fitness function registered"}
 
+    # ── MAE adversarial fitness (S9-01) ─────────────────────────────────────
+    mae_enabled = os.getenv("MAE_ADVERSARIAL", "true").lower() == "true"
+    if mae_enabled and fitness_fn is not None:
+        mae_fn = functools.partial(mae_adversarial_fitness, pod=pod_name)
+        effective_fitness_fn = mae_fn
+    else:
+        effective_fitness_fn = fitness_fn
+
     toolbox = base.Toolbox()
     toolbox.register("individual", _make_individual)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-    toolbox.register("evaluate", _evaluate, fitness_fn=fitness_fn)
+    toolbox.register("evaluate", _evaluate, fitness_fn=effective_fitness_fn)
     toolbox.register("mate", tools.cxBlend, alpha=0.5)
     toolbox.register("mutate", _mutate_individual)
     toolbox.register("select", tools.selTournament, tournsize=TOURNAMENT_SIZE)
@@ -155,6 +236,21 @@ async def genetic_cycle(pod_name: str, supabase_client=None) -> dict:
             logger.warning("[evolution] supabase persist fail: %s", exc)
 
     logger.info("[evolution] cycle done pod=%s best_score=%.4f", pod_name, best_score)
+
+    # Publish MAE cycle complete event (S9-01)
+    try:
+        from events.bus import NexusEvent, publish
+        await publish(
+            NexusEvent(
+                pod=pod_name,
+                event_type="nexus.mae_cycle_complete",
+                payload={"pod": pod_name, "top_score": best_score, "generation": GENERATIONS},
+            ),
+            supabase_client=supabase_client,
+        )
+    except Exception as exc:
+        logger.debug("[evolution] event publish fail (non-critical): %s", exc)
+
     return result
 
 

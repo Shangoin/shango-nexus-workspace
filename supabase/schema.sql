@@ -147,7 +147,8 @@ create table if not exists syntropy_packs (
 );
 
 -- ── MARS Lessons (Aurora legacy + Nexus) ─────────────────────────
-create table if not exists mars_lessons (
+drop table if exists mars_lessons cascade;
+create table mars_lessons (
   id               uuid default gen_random_uuid() primary key,
   pod              text not null,
   module           text,
@@ -159,7 +160,8 @@ create table if not exists mars_lessons (
 );
 
 -- ── Prompt Versions ──────────────────────────────────────────────
-create table if not exists prompt_versions (
+drop table if exists prompt_versions cascade;
+create table prompt_versions (
   id          uuid default gen_random_uuid() primary key,
   pod         text not null,
   version     text not null,

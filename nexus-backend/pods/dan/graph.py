@@ -1,23 +1,53 @@
-"""
-nexus/pods/dan/graph.py
-DAN IT Swarm — LangGraph Plan→Critique→Execute→Self-Heal loop.
+"""nexus/pods/dan/graph.py
+DAN IT Swarm — LangGraph Plan→Critique→Execute→(ConstitutionGuard)→Self-Heal loop.
 
 Purpose:  Full LangGraph state machine for autonomous IT task execution.
-          Nodes: planner → critic → executor → (healer | verifier) → END
+          Nodes: planner → critic → executor → constitution_guard → (healer | verifier) → END
+          Constitutional guard checks generated plans for dangerous patterns before execution.
           Self-heals up to 3 times before giving up gracefully.
 Inputs:   DANState(task=str) passed to dan_app.ainvoke()
-Outputs:  DANState with result, verified, healed, iterations populated
+Outputs:  DANState with result, verified, healed, iterations, constitutional_violations populated
 Side Effects: Publishes nexus events on execution and self-heal; writes to nexus_events
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# ── S9-06: DAN code constitution (arXiv:2602.02584) ────────────────────────────
+DAN_CODE_CONSTITUTION: list[dict] = [
+    {"id": "D1", "pattern": r"rm\s+-rf\s+/", "label": "destructive_root_delete"},
+    {"id": "D2", "pattern": r"(password|secret|api_key)\s*=\s*['\"][^'\"]{4,}['\"]\s*", "label": "hardcoded_credential"},
+    {"id": "D3", "pattern": r"curl\s+http[s]?://(?!localhost|127\.0\.0\.1)", "label": "network_exfiltration"},
+    {"id": "D4", "pattern": r"sudo\b(?!.*#\s*REASON:)", "label": "sudo_without_justification"},
+    {"id": "D5", "pattern": r"DROP\s+TABLE|TRUNCATE\s+TABLE", "label": "destructive_db_operation"},
+]
+
+
+def check_code_constitution(code_or_command: str) -> list[dict]:
+    """
+    S9-06: Scan generated code/plan against DAN constitutional rules.
+    Purpose:  Prevent dangerous code from executing (synchronous regex check).
+    Inputs:   code_or_command str — generated plan or code snippet
+    Outputs:  list[dict] of violations: [{rule_id, label, match_snippet}]
+    Side Effects: None (pure regex, no LLM)
+    """
+    violations = []
+    for rule in DAN_CODE_CONSTITUTION:
+        match = re.search(rule["pattern"], code_or_command, re.IGNORECASE)
+        if match:
+            violations.append({
+                "rule_id": rule["id"],
+                "label": rule["label"],
+                "match_snippet": match.group()[:80],
+            })
+    return violations
 
 
 # ── State model ──────────────────────────────────────────────────────────────
@@ -27,9 +57,11 @@ class DANState(BaseModel):
     plan: str = ""
     critique: str = ""
     result: str = ""
+    status: str = ""  # S9-06: "REPLAN" | "HALTED_CONSTITUTION" | ""
     healed: bool = False
     iterations: int = 0
     verified: bool = False
+    constitutional_violations: int = 0  # S9-06: cumulative violation count
 
 
 # ── Node implementations ──────────────────────────────────────────────────────
@@ -183,10 +215,60 @@ async def verifier_node(state: DANState) -> DANState:
             pod_name="dan",
         )
         verified = verdict.strip().upper().startswith("YES")
-        return state.model_copy(update={"verified": verified})
+        return state.model_copy(update={"verified": verified, "status": ""})
     except Exception as exc:
         logger.warning("[dan:verifier] fail: %s — assuming unverified", exc)
-        return state.model_copy(update={"verified": False})
+        return state.model_copy(update={"verified": False, "status": ""})
+
+
+async def constitution_guard_node(state: DANState) -> DANState:
+    """
+    S9-06: Security by Construction (arXiv:2602.02584) constitutional guard.
+    Runs AFTER executor_node, BEFORE verifier_node.
+    Purpose:  Block dangerous plans; route to replanning or halt.
+    Inputs:   DANState with plan + result
+    Outputs:  DANState with status updated ("REPLAN"|"HALTED_CONSTITUTION"|"")
+    Side Effects: Publishes dan.constitutional_halt event on HALT
+    """
+    from events.bus import NexusEvent, publish
+
+    text_to_check = state.plan + "\n" + state.result
+    violations = check_code_constitution(text_to_check)
+
+    if not violations:
+        return state.model_copy(update={"status": ""})
+
+    total_violations = state.constitutional_violations + len(violations)
+
+    if total_violations >= 3:
+        try:
+            await publish(
+                NexusEvent("dan", "dan.constitutional_halt",
+                           {"violations": violations, "iteration": state.iterations}),
+                supabase_client=None,
+            )
+        except Exception:
+            pass
+        logger.error("[dan:guard] HALTED after %d violations: %s", total_violations, violations)
+        return state.model_copy(update={
+            "status": "HALTED_CONSTITUTION",
+            "constitutional_violations": total_violations,
+        })
+    else:
+        violation_notes = "\n".join(
+            f"- [{v['rule_id']}] {v['label']}: {v['match_snippet']}" for v in violations
+        )
+        updated_plan = (
+            state.plan
+            + f"\n\nCONSTITUTION VIOLATIONS DETECTED:\n{violation_notes}\n"
+            + "Replanning required. Address each violation explicitly."
+        )
+        logger.warning("[dan:guard] REPLAN violations=%d", len(violations))
+        return state.model_copy(update={
+            "plan": updated_plan,
+            "status": "REPLAN",
+            "constitutional_violations": total_violations,
+        })
 
 
 # ── Edge condition functions ─────────────────────────────────────────────────
@@ -197,6 +279,16 @@ def should_heal(state: DANState) -> str:
     if "CIRCUIT_OPEN" in state.result or "error" in state.result.lower() or "ERROR" in state.result:
         return "heal"
     return "verify"
+
+
+def guard_route(state: DANState) -> str:
+    """S9-06: Route from constitution_guard_node."""
+    if state.status == "HALTED_CONSTITUTION":
+        return "end"
+    if state.status == "REPLAN":
+        return "planner"
+    # No constitutional issues — use existing heal/verify logic
+    return should_heal(state)
 
 
 def should_continue(state: DANState) -> str:
@@ -214,15 +306,17 @@ _builder = StateGraph(DANState)
 _builder.add_node("planner", planner_node)
 _builder.add_node("critic", critic_node)
 _builder.add_node("executor", executor_node)
+_builder.add_node("constitution_guard", constitution_guard_node)
 _builder.add_node("healer", healer_node)
 _builder.add_node("verifier", verifier_node)
 
 _builder.set_entry_point("planner")
 _builder.add_edge("planner", "critic")
 _builder.add_edge("critic", "executor")
+_builder.add_edge("executor", "constitution_guard")  # S9-06: always go through guard
 _builder.add_conditional_edges(
-    "executor", should_heal,
-    {"heal": "healer", "verify": "verifier", "end": END},
+    "constitution_guard", guard_route,
+    {"planner": "planner", "heal": "healer", "verify": "verifier", "end": END},
 )
 _builder.add_edge("healer", "planner")
 _builder.add_conditional_edges(
@@ -232,4 +326,4 @@ _builder.add_conditional_edges(
 
 dan_app = _builder.compile()
 
-__all__ = ["dan_app", "DANState"]
+__all__ = ["dan_app", "DANState", "check_code_constitution", "DAN_CODE_CONSTITUTION"]
