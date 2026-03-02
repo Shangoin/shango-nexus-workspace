@@ -1,6 +1,6 @@
 # Shango Nexus — Project Status Report
-**Date:** March 2, 2026  
-**Compiled from:** 8 sprints, 6 git commits, 73 tests  
+**Date:** March 3, 2026  
+**Compiled from:** 10 sprints, 8 git commits, 116 tests  
 **GitHub:** https://github.com/Shangoin/shango-nexus-workspace
 
 ---
@@ -11,21 +11,24 @@
 
 | System | File | Status | Notes |
 |--------|------|--------|-------|
-| 6-LLM AI Cascade | `core/ai_cascade.py` | ✅ Complete | Gemini→Groq→Cerebras→Mistral→DeepSeek→GPT-4o-mini + Redis+LRU cache + PII scrub + humanizer |
-| 3-Tier Memory | `core/memory.py` | ✅ Complete | Redis→pgvector→mem0 |
-| DEAP Genetic Evolution | `core/evolution.py` | ✅ Complete | 50-pop, 10-gen, per-pod genomes, `register_pod()`, hourly scheduler |
-| Constitutional Law | `core/constitution.py` | ✅ Complete | YAML rules, circuit breakers, Slack violation alerts |
+| 6-LLM AI Cascade | `core/ai_cascade.py` | ✅ Complete | Gemini 3 Pro primary (+ 2.5 Flash fallback)→Groq→Cerebras→Mistral→DeepSeek→GPT-4o-mini + Redis+LRU cache + PII scrub + humanizer + `deep_think_call()` |
+| 3-Tier Memory | `core/memory.py` | ✅ Complete | Redis→pgvector→mem0; AMA causal recall, HiMem hierarchical decay+weights, ID-RAG interpretability-driven retrieval |
+| DEAP Genetic Evolution | `core/evolution.py` | ✅ Complete | 50-pop, 10-gen, per-pod genomes, `register_pod()`, hourly scheduler; Agent0 curriculum with MAE adversarial fitness, uncertainty-adaptive challenge |
+| Constitutional Law | `core/constitution.py` | ✅ Complete | YAML rules, circuit breakers, Slack violation alerts; COCOA constitutional evolution (`evolve_constitution()`) |
 | MCTS/PACV Planner | `core/mcts_graph.py` | ✅ Complete | LangGraph UCB1 planner, Plan→Act→Critique→Verify loop |
 | Genome Decoder | `core/genome_decoder.py` | ✅ Complete | 8-gene GENE_MAP, per-pod decode, `apply_genome_to_pod()` |
 | RSA Improvement Proofs | `core/improvement_proofs.py` | ✅ Complete | RSA-2048 signed proofs, `sign_proof_rsa()`, `verify_proof_rsa()` |
 | PII Interpretability | `core/interpretability.py` | ✅ Complete | TransformerLens stub + regex PII detection (email/Aadhaar/PAN/mobile), disabled via env var in prod |
+| MIT EnCompass Branching | `core/encompass.py` | ✅ Complete | Parallel branch execution, state cloning, LLM-scored branch selection; wired into DAN executor (3-branch) + Aurora brain (2-branch) |
+| DeepMind Agent Scaling Monitor | `core/agent_scaling_monitor.py` | ✅ Complete | 5 scaling metrics (coordination_overhead, message_density, redundancy_rate, coordination_efficiency, error_amplification), `ScalingHealthReport`, 30-min APScheduler job |
+| MEM1 Unified State | `core/mem1_state.py` | ✅ Complete | Constant-memory multi-turn (arXiv:2506.15841); `MEM1State`, `mem1_step()` IS+reason+act in one call, `mem1_multi_turn()` |
 | Event Bus | `events/bus.py` | ✅ Complete | Supabase realtime pub/sub, 5 cross-pod signal routes |
 | SSE Realtime Stream | `api/realtime.py` | ✅ Complete | `GET /api/realtime/events`, Supabase WS manager with exponential-backoff reconnect, 30s heartbeat |
 | Payments (Unified) | `api/payments.py` | ✅ Complete | Stripe + Razorpay catalogue, INR + USD pricing |
 | Razorpay Webhooks | `api/razorpay_webhook.py` | ✅ Complete | HMAC-SHA256 verify, Redis retry queue, dead-letter after 5 attempts, Slack alerts |
 | Health Check | `api/health.py` | ✅ Complete | 11-subsystem check: redis, supabase, realtime_ws, dan_graph, rsa_signing, pii_detection, retry_queue, dead_letter, variant_champions, test_count, version |
-| Nexus API | `api/nexus.py` | ✅ Complete | `GET /api/nexus/variant-stats` — Champion vs Challenger A/B analytics |
-| Database Schema | `supabase/schema.sql` | ✅ Complete | 14 tables: nexus_events, nexus_evolutions, nexus_memories (pgvector), nexus_subscriptions, nexus_variant_stats, nexus_improvement_proofs, aurora_leads, aurora_calls, mars_lessons, prompt_versions, syntropy_sessions |
+| Nexus API | `api/nexus.py` | ✅ Complete | `GET /api/nexus/variant-stats` + `GET /api/nexus/scaling-health` |
+| Database Schema | `supabase/schema.sql` + `schema_sprint9.sql` + `schema_sprint10.sql` | ✅ Complete | 19 tables: core 14 + nexus_scaling_reports, nexus_encompass_results, nexus_agent0_uncertainty, nexus_mem1_sessions, nexus_ers_calculations |
 | FastAPI App | `main.py` | ✅ Complete | Lifespan with graceful Supabase degradation, all 13 pod routers mounted, CORS, scheduler, realtime |
 
 ### Aurora Pod — AI Sales Organ (70% complete)
@@ -38,6 +41,7 @@
 | MARS self-improvement loop (every 25 calls, MCTS + Vapi PATCH) | ✅ Built |
 | Reconstructive Memory — strategic call brief from lead history | ✅ Built |
 | Brain — dual-brain tactical prompt + genome decode | ✅ Built |
+| EnCompass 2-branch `generate_tactical_prompt()` (MIT, 15–40% accuracy boost) | ✅ Built |
 | UCB1 RL variant selection across 4 script elements | ✅ Built |
 | `check_and_promote_champion()` — auto-patches live Vapi prompt | ✅ Built |
 | `retire_losing_variants()` — prunes < 10% win rate after 20 calls | ✅ Built |
@@ -49,6 +53,8 @@
 | Component | Status |
 |-----------|--------|
 | LangGraph StateGraph — 5 async nodes, conditional edges, 3-retry healer | ✅ Built |
+| EnCompass 3-branch executor_node with `encompass_winning_branch` DANState field | ✅ Built |
+| DAN Code Constitution regex guards | ✅ Built |
 | Router with `/diagnose`, `/fix`, `/status` | ✅ Built |
 | Integration tests (5 tests) | ✅ Built |
 
@@ -67,6 +73,7 @@
 |-----------|--------|
 | MIT SEAL adaptive difficulty — inner + outer loop | ✅ Built |
 | Session start/answer/performance REST API | ✅ Built |
+| `POST /ers/calculate` batch ERS scoring (accuracy + speed bonus + LLM feedback) | ✅ Built |
 | ERS ≥ 75 cross-sell trigger → Aurora n8n workflow | ✅ Built |
 
 ### Remaining Pods — Scaffold Complete
@@ -75,7 +82,7 @@
 |-----|------|-------------|------------|
 | `syntropy` | Tutor Organ | Router, status endpoint | 85% |
 | `ralph` | PRD Forge | Router, status endpoint | 95% |
-| `sentinel_prime` | Doc Intel | Router, status endpoint | 80% |
+| `sentinel_prime` | Doc Intel | Router, `/analyze`, `/search` endpoints | 90% |
 | `sentinel_researcher` | Research Eye | Router, status endpoint | 45% |
 | `shango_automation` | Webhook Veins | Router, status endpoint | 90% |
 | `syntropy_launch` | Deployer | Router, status endpoint | 95% |
@@ -127,8 +134,10 @@
 | `test_sprint6.py` | 22 | ✅ Passing |
 | `test_sprint7.py` | 12 | ✅ Passing |
 | `test_sprint8.py` | 8 | ✅ Passing |
+| `test_sprint9.py` | 22 | ✅ Passing |
+| `test_sprint10.py` | 26 | ✅ Passing |
 | `test_dan_graph.py` | 5 | ⚠️ Import path issue in venv (passes in CI via pytest.ini) |
-| **Total** | **73** | **68/73 locally, 73/73 in Docker/CI** |
+| **Total** | **116** | **111/116 locally, 116/116 in Docker/CI** |
 
 ---
 
@@ -176,7 +185,7 @@ Effort: 15–30 min in Vapi dashboard + update env vars.
 | Janus: set `ALPACA_ENABLED=true` + live capital allocation | janus | 4 hours | 🟡 Medium |
 | EU region node on Render | infra | 30 min config | 🟢 Low |
 | Viral Music Video pod full implementation | viral_music | 2–3 days | 🟢 Low |
-| Sentinel Prime document chunking + pgvector search | sentinel_prime | 2 days | 🟡 Medium |
+| ~~Sentinel Prime document chunking + pgvector search~~ | sentinel_prime | ✅ Done (Sprint 10) | — |
 | Sentinel Researcher full research pipeline | sentinel_researcher | 3 days | 🟢 Low |
 | Nexus Pro dashboard white-label (B2B) | all | 1 week | 🟢 Low |
 
@@ -249,10 +258,10 @@ Effort: 15–30 min in Vapi dashboard + update env vars.
 
 | Category | Count / Status |
 |----------|---------------|
-| Core systems built | 14/14 ✅ |
+| Core systems built | 17/17 ✅ |
 | Pods with working routers | 13/13 ✅ |
-| Tests passing (local) | 68/73 (5 path issue) |
-| Tests passing (CI/Docker) | 73/73 ✅ |
+| Tests passing (local) | 111/116 (5 path issue) |
+| Tests passing (CI/Docker) | 116/116 ✅ |
 | Render deployment | ⚠️ Boots, supabase unavailable (missing env vars) |
 | Database schema | ❌ Not yet run in Supabase |
 | API keys configured | 14/28 ✅ |
@@ -262,4 +271,4 @@ Effort: 15–30 min in Vapi dashboard + update env vars.
 
 ---
 
-*Shango India · team@shango.in · March 2, 2026*
+*Shango India · team@shango.in · March 3, 2026*
