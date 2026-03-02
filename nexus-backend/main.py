@@ -128,6 +128,12 @@ async def lifespan(app: FastAPI):
         lambda: asyncio.create_task(prune_ineffective_rules("aurora", app.state.supabase)),
         "interval", minutes=200, id="constitution_prune"
     )
+    # S10-02: DeepMind Agent Scaling Monitor — compute scaling health every 30 min
+    from core.agent_scaling_monitor import run_scaling_monitor
+    scheduler.add_job(
+        lambda: asyncio.create_task(run_scaling_monitor(app.state.supabase)),
+        "interval", minutes=30, id="scaling_monitor"
+    )
 
     scheduler.start()
     app.state.scheduler = scheduler

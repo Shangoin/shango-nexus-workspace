@@ -1,7 +1,7 @@
 """
 nexus/core/ai_cascade.py
-6-LLM cascade with Gemini 2.5 Flash as primary.
-Priority: gemini-2.5-flash → groq-llama3.3-70b → cerebras → mistral-small → deepseek-v3 → gpt-4o-mini
+6-LLM cascade with Gemini 3 Pro as primary (S10-00: upgraded from gemini-2.5-flash).
+Priority: gemini-3-pro → groq-llama3.3-70b → cerebras → mistral-small → deepseek-v3 → gpt-4o-mini
 Cache: Redis (1h TTL) → in-memory LRU fallback.
 PII scrub applied before every external call.
 Sprint 3: AgentOps session tracing wraps every cascade invocation.
@@ -59,7 +59,7 @@ _PII_PATTERN = re.compile(
 )
 
 PROVIDERS = [
-    "gemini-2.5-flash",
+    "gemini-3-pro",      # S10-00: upgraded from gemini-2.5-flash
     "groq-llama3.3-70b",
     "cerebras",
     "mistral-small",
@@ -213,8 +213,13 @@ async def _call_gemini(prompt: str) -> str:
     import google.generativeai as genai
 
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
-    response = await asyncio.to_thread(model.generate_content, prompt)
+    # S10-00: gemini-3-pro; falls back to preview tag format on auth error
+    try:
+        model = genai.GenerativeModel("gemini-3-pro")
+        response = await asyncio.to_thread(model.generate_content, prompt)
+    except Exception:
+        model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+        response = await asyncio.to_thread(model.generate_content, prompt)
     return response.text
 
 
@@ -285,7 +290,8 @@ async def _call_openai(prompt: str) -> str:
 
 
 _PROVIDER_FNS = {
-    "gemini-2.5-flash": _call_gemini,
+    "gemini-3-pro": _call_gemini,      # S10-00
+    "gemini-2.5-flash": _call_gemini,  # legacy alias kept for safety
     "groq-llama3.3-70b": _call_groq,
     "cerebras": _call_cerebras,
     "mistral-small": _call_mistral,
@@ -420,3 +426,61 @@ async def _cascade_call_core(
             last_err = exc
 
     raise last_err
+
+
+async def deep_think_call(prompt: str, pod_name: str,
+                          thinking_budget: int = 8000) -> tuple[str, str]:
+    """
+    S10-05: Gemini 3 Deep Think mode — extended reasoning for complex analysis.
+    Purpose:  Use Gemini's ThinkingConfig for MARS meta-analysis, DEAP review,
+              and COCOA judging that deserve long chain-of-thought reasoning.
+    Inputs:   prompt str, pod_name str, thinking_budget int (default 8000)
+    Outputs:  (final_answer: str, thinking_trace: str)
+    Side Effects: One Gemini API call (no cache — deep analysis is unique per call)
+    DO NOT use on every-call paths (slow and expensive).
+    """
+    try:
+        import google.generativeai as genai  # optional SDK — fall back gracefully if missing
+    except ImportError:
+        logger.warning("[deep_think] google-generativeai not installed — falling back to cascade")
+        result = await cascade_call(prompt, task_type="deep_think_fallback", pod_name=pod_name)
+        return result, ""
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        result = await cascade_call(prompt, task_type="deep_think_fallback", pod_name=pod_name)
+        return result, ""
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-3-pro")
+        generation_config = {"max_output_tokens": 8192}
+        # Try ThinkingConfig (available in Gemini 3 Deep Think)
+        try:
+            config = genai.types.GenerationConfig(
+                **generation_config,
+                thinking_config=genai.types.ThinkingConfig(thinking_budget=thinking_budget),
+            )
+        except (AttributeError, TypeError):
+            # SDK version doesn't support ThinkingConfig yet — use plain config
+            config = genai.types.GenerationConfig(**generation_config)
+
+        response = await asyncio.to_thread(model.generate_content, prompt,
+                                           generation_config=config)
+        thinking_trace = ""
+        final_answer = ""
+        try:
+            for part in response.candidates[0].content.parts:
+                if getattr(part, "thought", False):
+                    thinking_trace = part.text
+                else:
+                    final_answer += part.text
+        except Exception:
+            # Older SDK format — just use response.text
+            final_answer = response.text
+        return final_answer or response.text, thinking_trace
+
+    except Exception as exc:
+        logger.warning("[deep_think] Gemini Deep Think failed, falling back: %s", exc)
+        result = await cascade_call(prompt, task_type="deep_think_fallback", pod_name=pod_name)
+        return result, ""

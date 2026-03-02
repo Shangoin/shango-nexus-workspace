@@ -62,6 +62,8 @@ class DANState(BaseModel):
     iterations: int = 0
     verified: bool = False
     constitutional_violations: int = 0  # S9-06: cumulative violation count
+    encompass_winning_branch: int = 0   # S10-01: which branch won
+    encompass_best_score: float = 0.0   # S10-01: best branch score
 
 
 # ── Node implementations ──────────────────────────────────────────────────────
@@ -125,7 +127,8 @@ async def executor_node(state: DANState) -> DANState:
     Outputs:  DANState with result populated, iterations incremented
     Side Effects: Publishes dan.task_executed event
     """
-    from core.ai_cascade import cascade_call
+    from core.ai_cascade import cascade_call  # noqa: F401 — kept for healer/verifier
+    from core.encompass import encompass_branch  # S10-01
     from core.constitution import get_constitution
     from events.bus import NexusEvent, publish
 
@@ -134,25 +137,42 @@ async def executor_node(state: DANState) -> DANState:
         logger.warning("[dan:executor] circuit OPEN")
         return state.model_copy(update={"result": "CIRCUIT_OPEN", "iterations": state.iterations + 1})
 
+    executor_prompt = (
+        f"Execute this plan step by step. Report each step's outcome clearly.\n"
+        f"Plan:\n{state.plan}\n"
+        f"Risks to avoid:\n{state.critique}"
+    )
     try:
-        result = await cascade_call(
-            f"Execute this plan step by step. Report each step's outcome clearly.\n"
-            f"Plan:\n{state.plan}\n"
-            f"Risks to avoid:\n{state.critique}",
-            task_type="execution",
+        # S10-01: EnCompass branching — explore 3 execution paths, pick best
+        enc_result = await encompass_branch(
+            prompt=executor_prompt,
+            task_type="dan_executor",
             pod_name="dan",
+            state={"plan": state.plan, "task": state.task},
+            max_branches=3,
         )
+        result = enc_result.output
         const.record_success("dan_executor")
 
         try:
             await publish(
-                NexusEvent("dan", "task_executed", {"task": state.task[:100], "result_len": len(result)}),
+                NexusEvent("dan", "task_executed", {
+                    "task": state.task[:100],
+                    "result_len": len(result),
+                    "winning_branch": enc_result.winning_branch,
+                    "best_score": enc_result.best_score,
+                }),
                 supabase_client=None,
             )
         except Exception:
             pass
 
-        return state.model_copy(update={"result": result, "iterations": state.iterations + 1})
+        return state.model_copy(update={
+            "result": result,
+            "iterations": state.iterations + 1,
+            "encompass_winning_branch": enc_result.winning_branch,
+            "encompass_best_score": enc_result.best_score,
+        })
 
     except Exception as exc:
         const.record_failure("dan_executor")

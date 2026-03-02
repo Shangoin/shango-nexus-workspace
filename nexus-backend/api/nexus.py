@@ -101,6 +101,36 @@ async def recent_events(request: Request, limit: int = 50):
         return {"events": [], "error": str(exc)}
 
 
+@router.get("/scaling-health")
+async def get_scaling_health(request: Request):
+    """
+    Purpose:     Return latest DeepMind agent scaling health report.
+    Inputs:      None
+    Outputs:     {healthy, coordination_efficiency, error_amplification, warnings, measured_at}
+    Side Effects: None (read-only cache hit)
+    """
+    from core.agent_scaling_monitor import get_last_scaling_report
+    report = get_last_scaling_report()
+    if report is None:
+        return {
+            "healthy": True,
+            "coordination_efficiency": None,
+            "error_amplification": None,
+            "warnings": ["Scaling monitor has not run yet — first report in <30 min"],
+            "measured_at": None,
+        }
+    return {
+        "healthy": report.healthy,
+        "coordination_overhead": report.coordination_overhead,
+        "message_density": report.message_density,
+        "redundancy_rate": report.redundancy_rate,
+        "coordination_efficiency": report.coordination_efficiency,
+        "error_amplification": report.error_amplification,
+        "warnings": report.warnings,
+        "measured_at": report.measured_at,
+    }
+
+
 @router.get("/variant-stats")
 async def get_variant_stats(pod: str = "aurora", request: Request = None):
     """

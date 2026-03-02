@@ -257,3 +257,89 @@ async def status(request: Request):
         }
     except Exception as exc:
         return {"pod": "syntropy_war_room", "error": str(exc)}
+
+
+# ── S10-07: ERS direct-calculation endpoint ──────────────────────────────────
+
+class ERSCalculateRequest(BaseModel):
+    student_id: str
+    topic: str
+    answers: list[dict]   # [{question, student_answer, correct_answer, time_seconds}]
+    exam_type: str = "jee"  # jee | neet | sat
+
+
+@router.post("/ers/calculate")
+async def calculate_ers(body: ERSCalculateRequest):
+    """
+    Purpose:  Directly calculate an ERS (Exam Readiness Score) for a student
+              given a batch of answers without a running session.
+              S10-07: Direct ERS calculation endpoint for external integrations.
+    Inputs:   student_id, topic, answers list, exam_type
+    Outputs:  {student_id, ers_score, percentile, grade, strengths, weaknesses}
+    Side Effects: 1 cascade_call; publishes syntropy.ers_calculated event
+    """
+    if not body.answers:
+        return {"student_id": body.student_id, "ers_score": 0, "percentile": 0,
+                "grade": "N/A", "strengths": [], "weaknesses": []}
+
+    answered = len(body.answers)
+    correct = sum(
+        1 for a in body.answers
+        if a.get("student_answer", "").lower().strip() ==
+           a.get("correct_answer", "").lower().strip()
+    )
+    raw_accuracy = correct / answered
+
+    # Speed bonus: answers under 30s get +0.02 each
+    fast_answers = sum(1 for a in body.answers if a.get("time_seconds", 60) < 30)
+    speed_bonus = min(0.1, fast_answers * 0.02)
+
+    base_score = round((raw_accuracy + speed_bonus) * 100, 1)
+
+    # LLM analysis for qualitative strengths/weaknesses
+    try:
+        analysis_raw = await cascade_call(
+            f"Analyze this {body.exam_type.upper()} exam performance for topic: {body.topic}.\n"
+            f"Total: {answered} questions, Correct: {correct}, Accuracy: {raw_accuracy:.0%}.\n"
+            f"Sample wrong answers: {[a for a in body.answers if a.get('student_answer','').lower().strip() != a.get('correct_answer','').lower().strip()][:3]}\n"
+            f'Return JSON: {{"strengths": ["str"], "weaknesses": ["str"], "percentile": int}}',
+            task_type="ers_analysis",
+            pod_name="syntropy_war_room",
+        )
+        import json, re
+        match = re.search(r'\{.*\}', analysis_raw, re.DOTALL)
+        analysis = json.loads(match.group()) if match else {}
+    except Exception:
+        analysis = {}
+
+    percentile = analysis.get("percentile", round(raw_accuracy * 99))
+    grade = (
+        "A+" if base_score >= 90 else
+        "A"  if base_score >= 80 else
+        "B"  if base_score >= 70 else
+        "C"  if base_score >= 60 else "D"
+    )
+
+    try:
+        await publish(NexusEvent(
+            pod="syntropy_war_room",
+            event_type="syntropy.ers_calculated",
+            payload={"student_id": body.student_id, "ers_score": base_score,
+                     "topic": body.topic, "exam_type": body.exam_type},
+        ))
+    except Exception:
+        pass
+
+    return {
+        "student_id": body.student_id,
+        "topic": body.topic,
+        "exam_type": body.exam_type,
+        "ers_score": base_score,
+        "percentile": percentile,
+        "grade": grade,
+        "total_questions": answered,
+        "correct_answers": correct,
+        "accuracy_pct": round(raw_accuracy * 100, 1),
+        "strengths": analysis.get("strengths", []),
+        "weaknesses": analysis.get("weaknesses", []),
+    }

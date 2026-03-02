@@ -91,32 +91,32 @@ async def generate_tactical_prompt(
     Outputs:  Complete Vapi system prompt for THIS CALL ONLY (≤800 words)
     Side Effects: None (pure generation; caller does the PATCH)
     """
-    from core.ai_cascade import cascade_call
+    from core.encompass import encompass_branch  # S10-01: 2-branch parallel
 
+    tactical_prompt_text = (
+        f"You are generating a Vapi voice-agent system prompt for a single outbound sales call.\n\n"
+        f"Base prompt template:\n{base_prompt}\n\n"
+        f"Strategic brief for this call:\n{strategic_brief}\n\n"
+        f"Lead: {lead.get('name', 'the prospect')} at {lead.get('company', 'their company')}\n"
+        f"Country: {lead.get('country_code', 'IN')}\n\n"
+        f"Generate a complete, deployable Vapi system prompt that:\n"
+        f"- Incorporates the strategic brief naturally into ARIA's personality\n"
+        f"- Has specific word-for-word scripts for the expected objection\n"
+        f"- References the prospect by name at least twice\n"
+        f"- Ends with the exact time-anchored closing ask from the brief\n"
+        f"- Is under 800 words\n"
+        f"- Does NOT mention \"strategic brief\" or \"AI\" — just natural conversation"
+    )
     try:
-        prompt = await cascade_call(
-            f"""You are generating a Vapi voice-agent system prompt for a single outbound sales call.
-
-Base prompt template:
-{base_prompt}
-
-Strategic brief for this call:
-{strategic_brief}
-
-Lead: {lead.get('name', 'the prospect')} at {lead.get('company', 'their company')}
-Country: {lead.get('country_code', 'IN')}
-
-Generate a complete, deployable Vapi system prompt that:
-- Incorporates the strategic brief naturally into ARIA's personality
-- Has specific word-for-word scripts for the expected objection
-- References the prospect by name at least twice
-- Ends with the exact time-anchored closing ask from the brief
-- Is under 800 words
-- Does NOT mention "strategic brief" or "AI" — just natural conversation""",
+        # S10-01: EnCompass 2-branch — pick best Vapi prompt (cost-conscious)
+        enc_result = await encompass_branch(
+            prompt=tactical_prompt_text,
             task_type="tactical_prompt",
             pod_name="aurora",
+            state={"lead": lead},
+            max_branches=2,
         )
-        return prompt
+        return enc_result.output
     except Exception as exc:
         logger.error("[brain] tactical_prompt fail: %s", exc)
         return base_prompt  # Fall back to base — never fail silently on Vapi

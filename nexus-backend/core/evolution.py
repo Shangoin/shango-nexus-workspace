@@ -15,6 +15,7 @@ import os
 import random
 import re
 import time
+from collections import defaultdict
 from typing import Any, Callable, Coroutine
 
 import numpy as np
@@ -59,13 +60,85 @@ def _parse_json_safe_mae(text: str) -> dict:
         return {}
 
 
+# ── S10-03: Agent0 curriculum — uncertainty-driven challenge adaptation ——————————
+
+_uncertainty_history: dict[str, list[float]] = defaultdict(list)
+
+
+def record_mae_score(pod: str, judge_score: float) -> None:
+    """
+    Purpose:  Record per-pod judge scores to build uncertainty estimate.
+    Inputs:   pod str, judge_score float 0.0-1.0
+    Outputs:  None (mutates _uncertainty_history)
+    Side Effects: Keeps last 20 scores per pod.
+    """
+    history = _uncertainty_history[pod]
+    history.append(float(judge_score))
+    if len(history) > 20:
+        _uncertainty_history[pod] = history[-20:]
+
+
+def get_executor_uncertainty(pod: str) -> float:
+    """
+    Purpose:  Compute uncertainty as 4x variance of last 10 scores, capped at 1.0.
+              High variance → high uncertainty → harder challenges.
+    Inputs:   pod str
+    Outputs:  float 0.0-1.0
+    Side Effects: None (read-only)
+    """
+    history = _uncertainty_history.get(pod, [])
+    window = history[-10:]
+    if len(window) < 2:
+        return 0.5  # Assume medium uncertainty on first runs
+    variance = float(np.var(window))
+    return min(1.0, variance * 4.0)
+
+
+async def curriculum_guided_challenge(pod: str, genome_summary: str, uncertainty: float) -> str:
+    """
+    Purpose:  Generate a challenge calibrated to agent uncertainty (Agent0 curriculum schedule).
+              Low uncertainty → hard challenge; High uncertainty → easier scaffold first.
+    Inputs:   pod str, genome_summary str, uncertainty float 0.0-1.0
+    Outputs:  challenge str
+    Side Effects: 1 cascade_call
+    """
+    from core.ai_cascade import cascade_call
+
+    if uncertainty < 0.3:
+        # Agent is consistent → challenge hard
+        difficulty_hint = "Make the challenge HARD and adversarial. Probe edge cases and failure modes."
+    elif uncertainty < 0.6:
+        # Medium uncertainty → moderate challenge
+        difficulty_hint = "Make it moderately difficult. Include one tricky constraint."
+    else:
+        # High variance → scaffold with a clear, structured challenge
+        difficulty_hint = "Make it structured and clear. The agent is still learning this skill."
+
+    try:
+        raw = await cascade_call(
+            f"You are a Curriculum Designer for an AI agent ({pod} pod). "
+            f"Genome config: {genome_summary}. "
+            f"Agent uncertainty: {uncertainty:.2f}. "
+            f"{difficulty_hint} "
+            f"Output ONE challenge (2-3 sentences). No commentary.",
+            task_type="mae_curriculum",
+            pod_name=pod,
+        )
+        return raw.strip()
+    except Exception as exc:
+        logger.warning("[evolution.curriculum] fail pod=%s: %s", pod, exc)
+        return "Handle a complex multi-step edge case with ambiguous inputs."
+
+
 async def mae_adversarial_fitness(individual: list, pod: str) -> float:
     """
-    Multi-Agent Evolve (arXiv:2510.23595) Proposer-Solver-Judge fitness.
+    Multi-Agent Evolve + Agent0 Curriculum (S10-03): Proposer-Solver-Judge fitness
+    with uncertainty-adaptive challenge difficulty.
     Purpose:  Adversarial triad evaluates an individual's genome quality.
+              Challenge difficulty scales with executor uncertainty (Agent0 curriculum).
     Inputs:   individual (list of 8 floats), pod (str)
     Outputs:  float fitness score 0.0-1.0 (+0.2 bonus if judge_score < 0.4)
-    Side Effects: 3 LLM cascade calls
+    Side Effects: 3-4 LLM cascade calls; records score to _uncertainty_history
     """
     from core.ai_cascade import cascade_call
     from core.genome_decoder import decode_genome
@@ -73,25 +146,18 @@ async def mae_adversarial_fitness(individual: list, pod: str) -> float:
     try:
         genome_config = decode_genome(list(individual), pod)
 
-        # Step 1 — PROPOSER: generate adversarial challenge
-        proposer_raw = await cascade_call(
-            f"You are a Proposer. Generate ONE hard adversarial test case for this "
-            f"genome configuration in the {pod} pod: {genome_config}. "
-            f'Output JSON: {{"challenge": "str", "difficulty": 0.5}}',
-            task_type="mae_proposer",
-            pod_name=pod,
-        )
-        proposer = _parse_json_safe_mae(proposer_raw)
-        challenge = proposer.get("challenge", "handle a complex multi-step edge case")
+        # S10-03: Agent0 — use uncertainty to calibrate challenge difficulty
+        uncertainty = get_executor_uncertainty(pod)
+        challenge = await curriculum_guided_challenge(pod, str(genome_config), uncertainty)
 
-        # Steps 2 + 3 — SOLVER and JUDGE in parallel (judge gets challenge context)
+        # Steps 2 + 3 — SOLVER and JUDGE in parallel
         solver_prompt = (
             f"You are a Solver. Handle this challenge using config: {genome_config}. "
             f"Challenge: {challenge}. "
             f'Output JSON: {{"solution": "str", "confidence": 0.7}}'
         )
         judge_initial_prompt = (
-            f"You are a Judge evaluating an AI solver's response. "
+            f"You are a Judge evaluating an AI solver\u2019s response. "
             f"Challenge: {challenge}. Genome config: {genome_config}. "
             f"Rate how well a typical solver would handle this. "
             f'Output JSON: {{"score": 0.5, "reasoning": "str"}}'
@@ -103,9 +169,11 @@ async def mae_adversarial_fitness(individual: list, pod: str) -> float:
         )
 
         solver = _parse_json_safe_mae(solver_raw)
-        solution = solver.get("solution", "")
         judge = _parse_json_safe_mae(judge_initial_raw)
         judge_score = float(judge.get("score", 0.5))
+
+        # Record for next-cycle uncertainty estimate
+        record_mae_score(pod, judge_score)
 
         # Difficulty reward: proposer rewarded for stumping the solver
         if judge_score < 0.4:
