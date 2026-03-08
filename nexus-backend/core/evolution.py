@@ -94,6 +94,95 @@ def get_executor_uncertainty(pod: str) -> float:
     return min(1.0, variance * 4.0)
 
 
+async def generate_self_edit(
+    pod: str,
+    challenge: str,
+    solution: str,
+    judge_score: float,
+    redis_client: Any = None,
+) -> str:
+    """
+    S11-01: MIT Self-Adapting Language Models (arXiv:2506.10943).
+    Purpose:  The model generates a structured self-edit — a rewrite of its own
+              reasoning process — which is stored and used in the next MARS cycle.
+              This produces persistent improvement, not just per-call prompt patches.
+    Inputs:   pod str, challenge str, solution str, judge_score float, redis_client
+    Outputs:  self_edit str (stored in Redis; returned for logging)
+    Side Effects: 1 cascade_call; Redis SET nexus:self_edit:{pod} (TTL 7200s)
+    """
+    from core.ai_cascade import cascade_call
+
+    try:
+        self_edit_prompt = (
+            f"You are a self-improving AI agent ({pod} pod). "
+            f"You just attempted this challenge: {challenge}\n"
+            f"Your solution: {solution}\n"
+            f"Judge score: {judge_score:.2f}/1.0\n\n"
+            f"Generate a SELF-EDIT — a structured rewrite of your reasoning process "
+            f"that would improve future performance. Format:\n"
+            f"PATTERN: <what reasoning pattern to use next time>\n"
+            f"AVOID: <what went wrong or should be avoided>\n"
+            f"ANCHOR: <one concrete rule to remember always>\n"
+            f"Keep it under 80 words. Be specific, not generic."
+        )
+        self_edit = await cascade_call(
+            self_edit_prompt,
+            task_type="mae_self_edit",
+            pod_name=pod,
+            skip_cache=True,
+        )
+        self_edit = self_edit.strip()
+
+        # Persist to Redis — next MAE cycle reconstructs context from this
+        if redis_client is not None:
+            try:
+                await redis_client.set(f"nexus:self_edit:{pod}", self_edit, ex=7200)
+            except Exception:
+                pass
+        else:
+            # Fallback: store in module-level dict (non-persistent across restarts)
+            _self_edit_cache[pod] = self_edit
+
+        logger.debug("[evolution.self_edit] pod=%s score=%.2f edit_len=%d",
+                     pod, judge_score, len(self_edit))
+        return self_edit
+
+    except Exception as exc:
+        logger.warning("[evolution.self_edit] fail pod=%s: %s", pod, exc)
+        return ""
+
+
+# Module-level self-edit cache (Redis fallback)
+_self_edit_cache: dict[str, str] = {}
+
+
+async def reconstruct_from_self_edit(pod: str, redis_client: Any = None) -> str:
+    """
+    S11-01: Retrieve the last self-edit for a pod to prefix the next solver prompt.
+    This converts the transient prompt-patch approach into persistent improvement.
+    Purpose:  Read self-edit from Redis or module cache; format as context prefix.
+    Inputs:   pod str, redis_client
+    Outputs:  str context prefix (empty string if no prior self-edit exists)
+    Side Effects: Redis GET nexus:self_edit:{pod}
+    """
+    self_edit = ""
+
+    if redis_client is not None:
+        try:
+            val = await redis_client.get(f"nexus:self_edit:{pod}")
+            self_edit = val.decode() if isinstance(val, bytes) else (val or "")
+        except Exception:
+            pass
+
+    if not self_edit:
+        self_edit = _self_edit_cache.get(pod, "")
+
+    if not self_edit:
+        return ""
+
+    return f"[SELF-EDIT from prior cycle]\n{self_edit}\n[END SELF-EDIT]\n\n"
+
+
 async def curriculum_guided_challenge(pod: str, genome_summary: str, uncertainty: float) -> str:
     """
     Purpose:  Generate a challenge calibrated to agent uncertainty (Agent0 curriculum schedule).
@@ -150,8 +239,12 @@ async def mae_adversarial_fitness(individual: list, pod: str) -> float:
         uncertainty = get_executor_uncertainty(pod)
         challenge = await curriculum_guided_challenge(pod, str(genome_config), uncertainty)
 
+        # S11-01: Reconstruct context from prior self-edit (persistent improvement)
+        prior_edit_ctx = await reconstruct_from_self_edit(pod)
+
         # Steps 2 + 3 — SOLVER and JUDGE in parallel
         solver_prompt = (
+            f"{prior_edit_ctx}"
             f"You are a Solver. Handle this challenge using config: {genome_config}. "
             f"Challenge: {challenge}. "
             f'Output JSON: {{"solution": "str", "confidence": 0.7}}'
@@ -174,6 +267,12 @@ async def mae_adversarial_fitness(individual: list, pod: str) -> float:
 
         # Record for next-cycle uncertainty estimate
         record_mae_score(pod, judge_score)
+
+        # S11-01: Generate self-edit — fire-and-forget, never blocks evolution
+        solution_text = solver.get("solution", "")
+        asyncio.create_task(
+            generate_self_edit(pod, challenge, solution_text, judge_score)
+        )
 
         # Difficulty reward: proposer rewarded for stumping the solver
         if judge_score < 0.4:

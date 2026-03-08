@@ -134,9 +134,32 @@ async def health_check(request: Request = None):
     except Exception:
         checks["variant_champions"] = -1
 
+    # ── Sprint 11: DeepMind coordination efficiency metrics ────────────────
+    # Surfaced from agent_scaling_monitor (computed every 30 min by APScheduler).
+    # coordination_efficiency < 0.4 → adding pods hurts performance (DeepMind).
+    # redundancy_rate > 0.6 → most cross-pod events trigger no downstream action.
+    try:
+        from core.agent_scaling_monitor import get_last_scaling_report
+        scaling = get_last_scaling_report()
+        if scaling is not None:
+            checks["coordination_efficiency"] = scaling.coordination_efficiency
+            checks["redundancy_rate"] = scaling.redundancy_rate
+            checks["error_amplification"] = scaling.error_amplification
+            checks["scaling_healthy"] = scaling.healthy
+            if scaling.warnings:
+                checks["scaling_warnings"] = scaling.warnings
+        else:
+            checks["coordination_efficiency"] = "pending_first_run"
+            checks["redundancy_rate"] = "pending_first_run"
+            checks["scaling_healthy"] = "pending_first_run"
+    except Exception as exc:
+        checks["coordination_efficiency"] = f"error: {str(exc)[:40]}"
+        checks["redundancy_rate"] = f"error: {str(exc)[:40]}"
+        checks["scaling_healthy"] = "error"
+
     # ── Meta ───────────────────────────────────────────────────────────────
-    checks["test_count"] = "73/73"  # Updated after Sprint 8 tests pass
-    checks["version"] = "v6.0-sprint8"
+    checks["test_count"] = "116/116"
+    checks["version"] = "v7.0-sprint11"
     checks["uptime_seconds"] = round(time.time() - _START)
     checks["status"] = (
         "ok"

@@ -144,3 +144,113 @@ Critique: {state.critique}"""
     state.result = state.action_taken
     logger.info("[pacv] done iterations=%d verified=%s", state.iterations, state.verified)
     return state
+
+
+# ── ARC Workflow Selector (S11-02) ────────────────────────────────────────────
+# "Learning to Configure Agentic AI Systems" — ArXiv 2602.11574
+#
+# ARC adds a hierarchical layer *above* MCTS:
+#   High-level policy:  which pod + workflow to invoke for a given signal
+#   Low-level policy:   what to do within that workflow (handled by mcts_plan/pacv)
+#
+# Implementation:
+#   1. Given a signal and a list of WorkflowOptions, ask the LLM to score each.
+#   2. Parse scores, sort, return top_k options.
+#   3. Caller then passes the winning workflow into mcts_plan / pacv_loop.
+#
+# This replaces the previous behaviour where MCTS only searched *within* a single
+# workflow — now the system first selects *which* workflow to run.
+
+
+@dataclass
+class WorkflowOption:
+    """
+    Describes one pod+workflow combination that the ARC selector can choose.
+    cost: relative compute cost (1.0 = normal, 2.0 = expensive, 0.5 = cheap).
+    """
+    name: str          # unique identifier, e.g. "aurora.lead_score"
+    pod: str           # pod that owns this workflow
+    description: str   # plain-language description of what it does
+    cost: float = 1.0  # relative compute cost
+
+    @property
+    def arc_spec(self) -> str:
+        """One-line spec used in the LLM scoring prompt."""
+        return f"{self.name} (pod={self.pod}, cost={self.cost:.1f}): {self.description}"
+
+
+async def arc_select_workflow(
+    signal: str,
+    workflows: list[WorkflowOption],
+    ai_fn,               # async fn(prompt: str) -> str  (usually cascade_call)
+    top_k: int = 1,
+) -> list[WorkflowOption]:
+    """
+    S11-02: ARC hierarchical policy — select the best pod+workflow for a signal.
+
+    Purpose:  Given an incoming signal and a list of available workflows, score
+              each option using the LLM and return the top_k best matches.
+              This is the "high-level policy" layer in ARC — it sits above MCTS.
+    Inputs:
+              signal     str  — the incoming signal / task description
+              workflows  list[WorkflowOption] — candidates to choose from
+              ai_fn      async fn(str) -> str — LLM scoring function
+              top_k      int — number of top workflows to return (default 1)
+    Outputs:  list[WorkflowOption] sorted by ARC score descending (length = top_k)
+    Side Effects: 1 LLM call via ai_fn
+    Errors:   Returns workflows[0:top_k] unranked on any LLM/parse failure.
+    """
+    if not workflows:
+        return []
+
+    if len(workflows) == 1:
+        return workflows[:top_k]
+
+    # Build scoring prompt
+    options_block = "\n".join(
+        f"  [{i}] {w.arc_spec}" for i, w in enumerate(workflows)
+    )
+    scoring_prompt = (
+        f"You are an ARC Workflow Selector — a high-level routing policy.\n"
+        f"Signal: {signal}\n\n"
+        f"Available workflows:\n{options_block}\n\n"
+        f"Score each workflow for fit to the signal on a scale 0.0–1.0.\n"
+        f"Consider: relevance, cost-efficiency, and whether the task is "
+        f"sequential (prefer single-agent) or parallelisable (prefer multi-pod).\n"
+        f"Output ONLY a JSON array of scores in the same index order, e.g. "
+        f"[0.9, 0.3, 0.7].  No explanation."
+    )
+
+    try:
+        raw = await ai_fn(scoring_prompt)
+        raw = raw.strip()
+
+        # Parse JSON array from response
+        import json
+        import re as _re
+        match = _re.search(r'\[[\d.,\s]+\]', raw)
+        if not match:
+            raise ValueError("No score array found in response")
+        scores: list[float] = json.loads(match.group())
+
+        if len(scores) != len(workflows):
+            raise ValueError(
+                f"Score count mismatch: got {len(scores)}, expected {len(workflows)}"
+            )
+
+        # Cost-adjust: divide raw score by cost to get efficiency score
+        efficiency = [s / max(w.cost, 0.1) for s, w in zip(scores, workflows)]
+        ranked = sorted(
+            zip(efficiency, workflows), key=lambda x: x[0], reverse=True
+        )
+
+        selected = [w for _, w in ranked[:top_k]]
+        logger.info(
+            "[arc] signal='%s...' top=%s score=%.2f",
+            signal[:50], selected[0].name, ranked[0][0] if ranked else 0,
+        )
+        return selected
+
+    except Exception as exc:
+        logger.warning("[arc] workflow selection failed, returning default: %s", exc)
+        return workflows[:top_k]

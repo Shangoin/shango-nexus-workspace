@@ -14,8 +14,8 @@ async def test_generate_strategic_brief_returns_string():
         "recommended_close": "Thursday 2PM?",
     }
 
-    with patch("pods.aurora.brain.reconstruct_prospect_persona", new_callable=AsyncMock, return_value=mock_persona), \
-         patch("pods.aurora.brain.cascade_call", new_callable=AsyncMock, return_value=(
+    with patch("pods.aurora.reconstructive_memory.reconstruct_prospect_persona", new_callable=AsyncMock, return_value=mock_persona), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=(
              "1. Buying stage: consideration\n"
              "2. Primary pain: manual lead qualification\n"
              "3. Objection: Too costly — reframe: ROI within 30 days\n"
@@ -37,7 +37,7 @@ async def test_generate_strategic_brief_returns_string():
 @pytest.mark.asyncio
 async def test_generate_tactical_prompt_returns_string():
     """generate_tactical_prompt must return a deployable prompt string."""
-    with patch("pods.aurora.brain.cascade_call", new_callable=AsyncMock, return_value=(
+    with patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=(
         "You are ARIA, a sales agent specialising in AI automation. "
         "Lead: Priya at TechCorp. Open with the ROI question. "
         "If they object on price, use the 30-day ROI reframe. "
@@ -56,8 +56,8 @@ async def test_generate_tactical_prompt_returns_string():
 @pytest.mark.asyncio
 async def test_generate_strategic_brief_falls_back_on_cascade_error():
     """Should return fallback string on cascade failure, never raise."""
-    with patch("pods.aurora.brain.reconstruct_prospect_persona", new_callable=AsyncMock, return_value={}), \
-         patch("pods.aurora.brain.cascade_call", new_callable=AsyncMock, side_effect=RuntimeError("API down")):
+    with patch("pods.aurora.reconstructive_memory.reconstruct_prospect_persona", new_callable=AsyncMock, return_value={}), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, side_effect=RuntimeError("API down")):
         from pods.aurora.brain import generate_strategic_brief
         brief = await generate_strategic_brief({"company": "Broken Corp"})
 

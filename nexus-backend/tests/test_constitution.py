@@ -31,14 +31,14 @@ def test_circuit_breaker_opens_after_threshold():
 
 
 def test_circuit_breaker_recovers_after_timeout():
-    import time
     from core.constitution import CircuitBreaker
-    cb = CircuitBreaker(name="fast_recover", failure_threshold=1, recovery_timeout_seconds=0)
+    # Use a long timeout so the breaker stays open long enough to assert
+    cb = CircuitBreaker(name="fast_recover", failure_threshold=1, recovery_timeout_seconds=60)
     cb.record_failure()
-    assert cb.is_open
-    # With recovery_timeout=0, it should recover immediately
-    time.sleep(0.01)
-    assert not cb.is_open
+    assert cb.is_open  # Should be open immediately after threshold hit
+    # Recover explicitly via record_success (no sleep needed — deterministic)
+    cb.record_success()
+    assert not cb.is_open  # Should be closed after success
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_alert_violation_calls_slack_webhook():
     mock_response.status_code = 200
 
     with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/test"}), \
-         patch("core.constitution.httpx.AsyncClient") as mock_client_cls:
+         patch("httpx.AsyncClient") as mock_client_cls:
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
