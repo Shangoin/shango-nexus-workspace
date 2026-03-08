@@ -12,9 +12,9 @@ async def test_detect_regime_live_returns_valid_regime():
     class MockNode:
         action = "bull"
 
-    with patch("pods.janus.market_feed.mcts_plan", new_callable=AsyncMock, return_value=MockNode()), \
-         patch("pods.janus.market_feed.cascade_call", new_callable=AsyncMock, return_value="0.75"), \
-         patch("pods.janus.market_feed.publish", new_callable=AsyncMock):
+    with patch("core.mcts_graph.mcts_plan", new_callable=AsyncMock, return_value=MockNode()), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value="0.75"), \
+         patch("events.bus.publish", new_callable=AsyncMock):
         from pods.janus.market_feed import detect_regime_live
         regime = await detect_regime_live({})
 
@@ -25,8 +25,8 @@ async def test_detect_regime_live_returns_valid_regime():
 @pytest.mark.asyncio
 async def test_detect_regime_live_handles_mcts_failure():
     """detect_regime_live should return 'unknown' when MCTS fails."""
-    with patch("pods.janus.market_feed.mcts_plan", new_callable=AsyncMock, side_effect=RuntimeError("MCTS fail")), \
-         patch("pods.janus.market_feed.publish", new_callable=AsyncMock):
+    with patch("core.mcts_graph.mcts_plan", new_callable=AsyncMock, side_effect=RuntimeError("MCTS fail")), \
+         patch("events.bus.publish", new_callable=AsyncMock):
         from pods.janus.market_feed import detect_regime_live
         regime = await detect_regime_live({"SPY": {"change_pct": -2.0}})
 

@@ -16,9 +16,9 @@ async def test_reconstruct_returns_required_keys():
         "recommended_close": "Tuesday 3PM?",
     })
 
-    with patch("pods.aurora.reconstructive_memory.recall", new_callable=AsyncMock, return_value=mock_recall_data), \
-         patch("pods.aurora.reconstructive_memory.cascade_call", new_callable=AsyncMock, return_value=mock_cascade_response), \
-         patch("pods.aurora.reconstructive_memory.remember", new_callable=AsyncMock):
+    with patch("core.memory.recall", new_callable=AsyncMock, return_value=mock_recall_data), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=mock_cascade_response), \
+         patch("core.memory.remember", new_callable=AsyncMock):
         from pods.aurora.reconstructive_memory import reconstruct_prospect_persona
         result = await reconstruct_prospect_persona({"company": "Acme", "pain_point": "manual outreach"})
 
@@ -32,7 +32,7 @@ async def test_reconstruct_returns_required_keys():
 @pytest.mark.asyncio
 async def test_reconstruct_returns_empty_result_when_no_recall():
     """Should return default empty result gracefully when no memory found."""
-    with patch("pods.aurora.reconstructive_memory.recall", new_callable=AsyncMock, return_value=[]):
+    with patch("core.memory.recall", new_callable=AsyncMock, return_value=[]):
         from pods.aurora.reconstructive_memory import reconstruct_prospect_persona
         result = await reconstruct_prospect_persona({"company": "NoData Inc"})
 
@@ -43,8 +43,8 @@ async def test_reconstruct_returns_empty_result_when_no_recall():
 @pytest.mark.asyncio
 async def test_reconstruct_handles_json_parse_error():
     """Should return empty default when cascade returns malformed JSON."""
-    with patch("pods.aurora.reconstructive_memory.recall", new_callable=AsyncMock, return_value=[{"data": "x"}]), \
-         patch("pods.aurora.reconstructive_memory.cascade_call", new_callable=AsyncMock, return_value="not json"):
+    with patch("core.memory.recall", new_callable=AsyncMock, return_value=[{"data": "x"}]), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value="not json"):
         from pods.aurora.reconstructive_memory import reconstruct_prospect_persona
         result = await reconstruct_prospect_persona({"company": "Test"})
 

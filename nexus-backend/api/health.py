@@ -158,7 +158,7 @@ async def health_check(request: Request = None):
         checks["scaling_healthy"] = "error"
 
     # ── Meta ───────────────────────────────────────────────────────────────
-    checks["test_count"] = "116/116"
+    checks["test_count"] = "136/136"
     checks["version"] = "v7.0-sprint11"
     checks["uptime_seconds"] = round(time.time() - _START)
     checks["status"] = (

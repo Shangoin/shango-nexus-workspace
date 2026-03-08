@@ -81,19 +81,14 @@ class TestMCPAdapter:
     @pytest.mark.asyncio
     async def test_mcp_call_cascade_routes_to_cascade_call(self):
         """mcp_call('cascade', ...) calls core.ai_cascade.cascade_call."""
-        with patch("core.mcp_adapter.cascade_call", new_callable=AsyncMock) as mock_cc:
-            # We need to patch where the tool handler imports cascade_call
-            mock_cc.return_value = "test response"
-            from core.mcp_adapter import mcp_call
-            # Re-patch the import inside the handler
-            with patch("core.ai_cascade.cascade_call", mock_cc):
-                # Direct handler test
-                from core.mcp_adapter import _TOOLS
-                handler = _TOOLS["cascade"].handler
-                with patch("core.ai_cascade.cascade_call", mock_cc):
-                    result = await handler(
-                        prompt="hello", task_type="test", pod_name="nexus"
-                    )
+        # cascade_call is imported lazily inside the handler — patch at source
+        mock_cc = AsyncMock(return_value="test response")
+        with patch("core.ai_cascade.cascade_call", mock_cc):
+            from core.mcp_adapter import _TOOLS
+            handler = _TOOLS["cascade"].handler
+            result = await handler(
+                prompt="hello", task_type="test", pod_name="nexus"
+            )
         # The handler calls cascade_call — verify shape
         assert isinstance(result, str)
 
@@ -310,7 +305,7 @@ class TestCoordinationMetricsInHealth:
 
     @pytest.mark.asyncio
     async def test_health_version_is_sprint11(self):
-        """GET /health must report version v7.0-sprint11 and test_count 116/116."""
+        """GET /health must report version v7.0-sprint11 and test_count 136/136."""
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from api.health import router
@@ -328,6 +323,6 @@ class TestCoordinationMetricsInHealth:
         assert data.get("version") == "v7.0-sprint11", (
             f"Expected v7.0-sprint11, got {data.get('version')}"
         )
-        assert data.get("test_count") == "116/116", (
-            f"Expected 116/116, got {data.get('test_count')}"
+        assert data.get("test_count") == "136/136", (
+            f"Expected 136/136, got {data.get('test_count')}"
         )

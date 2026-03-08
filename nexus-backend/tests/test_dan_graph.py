@@ -73,7 +73,7 @@ async def test_dan_healer_triggered_on_circuit_open():
 
     with patch(CASCADE_TARGET, side_effect=_circuit_cascade), \
          patch(PUBLISH_TARGET, new_callable=AsyncMock), \
-         patch(CONSTITUTION_TARGET, return_value=_mock_constitution()):
+         patch(CONSTITUTION_TARGET, return_value=_mock_constitution(breaker_open=True)):
         result = await dan_app.ainvoke(DANState(task="Test circuit open recovery"))
 
     assert isinstance(result, dict)

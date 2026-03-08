@@ -1,4 +1,5 @@
 """tests/test_payments.py — Sprint 2 S2-05"""
+import sys
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi.testclient import TestClient
@@ -24,18 +25,20 @@ def test_list_products_returns_all():
 def test_razorpay_create_order_returns_order_id():
     mock_order = {"id": "order_TEST123", "amount": 850000, "currency": "INR"}
 
-    with patch("api.payments.razorpay") as mock_rz_module:
-        mock_client = MagicMock()
-        mock_client.order.create.return_value = mock_order
-        mock_rz_module.Client.return_value = mock_client
+    # razorpay is imported lazily inside the route handler — patch via sys.modules
+    mock_rz_module = MagicMock()
+    mock_client = MagicMock()
+    mock_client.order.create.return_value = mock_order
+    mock_rz_module.Client.return_value = mock_client
 
-        import os
-        with patch.dict(os.environ, {"RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "secret"}):
-            client = TestClient(_make_app())
-            resp = client.post(
-                "/api/payments/razorpay/create-order",
-                json={"product_id": "aurora_pro", "user_email": "test@shango.in"},
-            )
+    import os
+    with patch.dict(sys.modules, {"razorpay": mock_rz_module}), \
+         patch.dict(os.environ, {"RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "secret"}):
+        client = TestClient(_make_app())
+        resp = client.post(
+            "/api/payments/razorpay/create-order",
+            json={"product_id": "aurora_pro", "user_email": "test@shango.in"},
+        )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -45,7 +48,10 @@ def test_razorpay_create_order_returns_order_id():
 
 
 def test_razorpay_create_order_unknown_product():
-    with patch.dict(__import__("os").environ, {"RAZORPAY_KEY_ID": "x", "RAZORPAY_KEY_SECRET": "x"}):
+    # razorpay is lazily imported — inject via sys.modules so the ImportError path is skipped
+    mock_rz_module = MagicMock()
+    with patch.dict(sys.modules, {"razorpay": mock_rz_module}), \
+         patch.dict(__import__("os").environ, {"RAZORPAY_KEY_ID": "x", "RAZORPAY_KEY_SECRET": "x"}):
         client = TestClient(_make_app())
         resp = client.post(
             "/api/payments/razorpay/create-order",

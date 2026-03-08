@@ -14,7 +14,7 @@ async def test_inner_loop_returns_question():
         "explanation": "Power rule: d/dx(x^n) = nx^(n-1)",
     })
 
-    with patch("pods.syntropy_war_room.seal.cascade_call", new_callable=AsyncMock, return_value=mock_q):
+    with patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=mock_q):
         from pods.syntropy_war_room.seal import inner_loop
         result = await inner_loop("student_001", "calculus", 0.5)
 
@@ -33,8 +33,8 @@ async def test_inner_loop_scores_correct_answer():
         "explanation": "Simple addition",
     })
 
-    with patch("pods.syntropy_war_room.seal.cascade_call", new_callable=AsyncMock, return_value=mock_q), \
-         patch("pods.syntropy_war_room.seal.remember", new_callable=AsyncMock):
+    with patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=mock_q), \
+         patch("core.memory.remember", new_callable=AsyncMock):
         from pods.syntropy_war_room.seal import inner_loop
         result = await inner_loop("student_001", "arithmetic", 0.2, student_answer="B")
 
@@ -52,8 +52,8 @@ async def test_inner_loop_scores_wrong_answer():
         "explanation": "Simple addition",
     })
 
-    with patch("pods.syntropy_war_room.seal.cascade_call", new_callable=AsyncMock, return_value=mock_q), \
-         patch("pods.syntropy_war_room.seal.remember", new_callable=AsyncMock):
+    with patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=mock_q), \
+         patch("core.memory.remember", new_callable=AsyncMock):
         from pods.syntropy_war_room.seal import inner_loop
         result = await inner_loop("student_001", "arithmetic", 0.2, student_answer="A")
 
@@ -66,9 +66,9 @@ async def test_outer_loop_returns_float_in_range():
     """outer_loop must return a float strictly in [0.0, 1.0]."""
     mock_notes = [{"is_correct": True, "score": 0.9, "difficulty": 0.4}] * 10
 
-    with patch("pods.syntropy_war_room.seal.recall", new_callable=AsyncMock, return_value=mock_notes), \
-         patch("pods.syntropy_war_room.seal.cascade_call", new_callable=AsyncMock, return_value="0.72"), \
-         patch("pods.syntropy_war_room.seal.remember", new_callable=AsyncMock):
+    with patch("core.memory.recall", new_callable=AsyncMock, return_value=mock_notes), \
+         patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value="0.72"), \
+         patch("core.memory.remember", new_callable=AsyncMock):
         from pods.syntropy_war_room.seal import outer_loop
         difficulty = await outer_loop("student_001")
 
@@ -79,7 +79,7 @@ async def test_outer_loop_returns_float_in_range():
 @pytest.mark.asyncio
 async def test_outer_loop_returns_default_when_no_notes():
     """outer_loop returns 0.5 when no notes exist."""
-    with patch("pods.syntropy_war_room.seal.recall", new_callable=AsyncMock, return_value=[]):
+    with patch("core.memory.recall", new_callable=AsyncMock, return_value=[]):
         from pods.syntropy_war_room.seal import outer_loop
         difficulty = await outer_loop("new_student")
 

@@ -274,7 +274,7 @@ def test_health_version_is_sprint7():
             resp = client.get("/health")
 
     assert resp.status_code == 200
-    assert resp.json()["version"] == "v6.0-sprint8"
+    assert resp.json()["version"] == "v7.0-sprint11"  # updated Sprint 11
 
 
 def test_health_test_count_is_60():
@@ -294,7 +294,7 @@ def test_health_test_count_is_60():
             resp = client.get("/health")
 
     assert resp.status_code == 200
-    assert resp.json()["test_count"] == "73/73"
+    assert resp.json()["test_count"] == "136/136"  # updated Sprint 11 cumulative
 
 
 def test_health_has_realtime_ws_field():
