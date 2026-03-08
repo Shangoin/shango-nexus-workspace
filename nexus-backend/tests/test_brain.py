@@ -37,12 +37,22 @@ async def test_generate_strategic_brief_returns_string():
 @pytest.mark.asyncio
 async def test_generate_tactical_prompt_returns_string():
     """generate_tactical_prompt must return a deployable prompt string."""
-    with patch("core.ai_cascade.cascade_call", new_callable=AsyncMock, return_value=(
-        "You are ARIA, a sales agent specialising in AI automation. "
-        "Lead: Priya at TechCorp. Open with the ROI question. "
-        "If they object on price, use the 30-day ROI reframe. "
-        "Close with: Thursday at 2 PM?"
-    )):
+    # encompass_branch imports cascade_call at module level — patch encompass_branch
+    # directly to avoid ordering-dependent module cache issues.
+    from dataclasses import make_dataclass
+    FakeResult = make_dataclass("FakeResult", [("output", str), ("branch_count", int),
+                                               ("winning_branch", int), ("best_score", float),
+                                               ("all_scores", list), ("backtracked", bool)])
+    mock_result = FakeResult(
+        output=(
+            "You are ARIA, a sales agent specialising in AI automation. "
+            "Lead: Priya at TechCorp. Open with the ROI question. "
+            "If they object on price, use the 30-day ROI reframe. "
+            "Close with: Thursday at 2 PM?"
+        ),
+        branch_count=2, winning_branch=0, best_score=0.9, all_scores=[0.9, 0.8], backtracked=False
+    )
+    with patch("core.encompass.encompass_branch", new_callable=AsyncMock, return_value=mock_result):
         from pods.aurora.brain import generate_tactical_prompt
         prompt = await generate_tactical_prompt(
             strategic_brief="Brief: ROI focus, Thursday close",
